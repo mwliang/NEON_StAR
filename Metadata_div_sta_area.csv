@@ -1,0 +1,28 @@
+variables,descriptions
+no.,the sequence number of sites
+domain,NEON domain
+siteID,the id of sites
+site_name,site name
+domain_name,domain name
+state,US state abbreviations
+biome_types,biome types
+latitude,latitude
+longitude,longitude
+elevation_m,elevation_m
+MAT_C,mean annual temperature (celsius)
+MAP_mm,mean annual precipitation (mm)
+started_year,the first year data collected in this study
+end_year,the last year data collected in this study
+duration,the duration of data collection in this study
+N,number of plots
+ave_dist,the mean pairwise plots spatial distance_km
+mnn_dist,the mean nearest neighbor spatial distance_km
+rich_all,the total number of plant species 
+sar_ave_slope,the log2-log2 slope of plant species richness
+sstar_slope,the log2-log2 slope of species stability
+asar_slope,the log2-log2 slope of species asynchrony
+estar_slope,the log2-log2 slope of ecosystem or community stability
+sar_ave_interc,the log2-log2 intercept of plant species richness
+sstar_interc,the log2-log2 intercept of species stability
+asar_interc,the log2-log2 intercept of species asynchrony
+estar_interc,the log2-log2 intercept of ecosystem or community stability
