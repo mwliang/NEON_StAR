@@ -1,0 +1,7 @@
+variables,descriptions
+siteID,the id of sites
+area,the total area covered by the given scales
+spe_sta,average species stabilty
+spe_asyn,average species asynchrony
+com_sta,average ecosystem or community stability
+sr,average richness of plant species

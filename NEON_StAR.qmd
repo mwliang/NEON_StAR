@@ -1,0 +1,853 @@
+---
+title: "NEON_StAR"
+format: docx
+Author: QY,ML,SW
+Date: 07-25-2024
+---
+
+## set up
+```{r}
+rm(list = ls())
+## working directory
+wd_path <- "~/Data&code"
+
+## library packges
+if (!"pacman" %in% rownames(installed.packages())) {
+  install.packages("pacman")
+}
+library(pacman)
+p_load(lmodel2, ggpmisc, ggplot2, ggthemes, dplyr, data.table, ggpubr, sjPlot, piecewiseSEM, gtsummary,psych)
+
+## theme for ggplot
+theme1 <- theme_bw() +
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(colour = "black", size = 0.5),
+    panel.border = element_blank(),
+    axis.text.y = element_text(size = 16, family = "sans", color = "black"),
+    axis.text.x = element_text(size = 16, family = "sans", color = "black"),
+    axis.title.y = element_text(size = 20, family = "sans", color = "black"),
+    axis.title.x = element_text(size = 20, family = "sans", color = "black"),
+    axis.ticks.length = unit(1, "mm"),
+    axis.line = element_line(color = "black", size = 0.5),
+    plot.tag = element_text(size = 22, family = "sans", color = "black")
+  )
+
+
+
+```
+## functions 
+```{r}
+
+#### for z-score trans
+my_scale <- function(x){
+  x1 <- (x-mean(x))/sd(x)
+  return(x1)
+}
+
+
+### function to fit standardized major axis regression, summaries statistics and generate plot 
+
+sma_fit_plot=function(x,y,pos,col,ref_line,theme,x_lim,y_lim){
+  # x,y:vectors of independent and dependent variable
+  # pos:relative position for the annotate,five parameter; (1) placement of annotate text("left" or "right");
+  # (2-4) specific position of annotate text on x axis, y axis,and linespace between different lines
+  # (5) whether coordinates in (2-4) represent relative ("rel") or absolute ("abs") coordinates 
+  # col: a list of 2; color for point and line,respectively
+  # ref_line: TRUE/FALSE; whether 1:1 line is presented (if TRUE, set the same range for x and y axis)
+  # x/y_lim: limits for x,y
+  # theme: ggplot theme
+  # Report:  TRUE/FALSE; report the fit results or not
+  dat=data.frame(x=x,y=y)
+  ### model fit ###########
+  
+  sma.model=lmodel2(y ~x, data=dat, nperm=999)
+ 
+  ci <-ggpmisc:::predict.lmodel2(sma.model, method= 'SMA', interval= "confidence")
+  sma_preds <- cbind(dat, ci)
+  
+  sma.result=cbind( sma.model$regression.results[sma.model$regression.results$Method== "SMA",2:3],sma.model$confidence.intervals[sma.model$confidence.intervals$Method== "SMA",4:5])
+  sma.result$Pvalues=sma.model$P.param
+  sma.result$R2=sma.model$rsquare
+  
+  ### plot ###########
+  
+  R2=round( sma.model$rsquare,2)
+  p=ifelse(round(sma.model$P.param,3)==0,"<0.001",round(sma.model$P.param,3))
+  z=as.numeric(round(sma.model$regression.results[sma.model$regression.results$Method== "SMA",3],2))
+  
+  lntype=ifelse(p<0.05,"solid","blank") ## set line type based on significance level
+  
+  if(pos[5]=="rel")   { 
+    ## transform from relative position to absolute coordinates based on range of x and y
+    if(p<0.05){
+      anno_pos=c(min(sma_preds$x)*as.numeric(pos[2]),max(sma_preds$upr)*as.numeric(pos[3]),
+                 max(sma_preds$upr)*as.numeric(pos[3])-(max(sma_preds$upr)-min(sma_preds$lwr))*as.numeric(pos[4]) )
+      
+    }else{
+      anno_pos=c(min(sma_preds$x)*as.numeric(pos[2]),max(y)*as.numeric(pos[3]),
+                 max(y)*as.numeric(pos[3])-(max(y)-min(y))*as.numeric(pos[4]))
+    }
+  }else{
+    anno_pos=as.numeric(pos[2:4])
+  }
+  
+  hjus=ifelse(pos[1]=="left",0,1)
+  
+   if(p<0.05){ 
+     ## show predicted fit and CI for significant results
+     plot <- ggplot() +
+      geom_point(data=dat,aes(x=x,y = y),size = 4, alpha = 0.5, color =col[1]) +
+      geom_line(data = sma_preds, mapping = aes(x=x,y=fit),size = 1.5, color=col[2],linetype = lntype) +
+      geom_ribbon(mapping=aes(x=x,ymin = lwr, ymax = upr), alpha = 0.1, sma_preds) 
+    
+   }else{
+     ## only points for non-significant fit
+     plot <- ggplot() +
+       geom_point(data=dat,aes(x=x,y = y),size = 4, alpha = 0.5, color =col[1]) 
+   }
+  
+  ## add statistics
+  plot=plot+
+    annotate("text", x =anno_pos[1], y = anno_pos[2], size = 5, family = "sans", label= deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P) == ~.(p))), 
+             color = col, parse=TRUE, hjust= hjus,vjust=1) +
+    annotate("text", x = anno_pos[1], y =anno_pos[3] , size = 5, family = "sans", 
+             colour = col, label =deparse(bquote(~italic(slope) == ~.(z))), parse=TRUE, hjust=  hjus,vjust=1) +
+    theme
+  
+  if(!missing(x_lim)){
+    x_lim= as.numeric(x_lim)
+    ## extend 10% for each end
+    x_lim[1]= x_lim[1]-(x_lim[2]-x_lim[1])*.1
+    x_lim[2]=x_lim[2]+(x_lim[2]-x_lim[1])*.1
+    plot=plot+
+      scale_x_continuous(limits = x_lim)
+  }
+  if(!missing(y_lim)){
+    y_lim= as.numeric( y_lim)
+    ## extend 10% for each end
+    y_lim[1]=y_lim[1]-( y_lim[2]- y_lim[1])*.1
+    y_lim[2]= y_lim[2]+( y_lim[2]- y_lim[1])*.1
+    plot=plot+
+      scale_y_continuous(limits =  as.numeric(y_lim))
+  }
+  
+   ## if 1:1 line is required, set consistent lower limit of x and y axis 
+  if(ref_line){
+    if(!missing(y_lim)){
+      min_xy=min(x_lim[1],y_lim[1])
+    }else{
+      min_xy=min(c(sma_preds$lwr,sma_preds$x))
+    }
+    
+    anno_pos2=c(0,0)
+    anno_pos2[1]=ifelse(missing(x_lim), max(sma_preds$x),x_lim[2])
+    anno_pos2[2]=anno_pos2[1]*1.05
+    
+    plot=plot+
+      geom_abline(intercept = 0, slope = 1, size = 0.5, color='gray') +
+      annotate("text", x = anno_pos2[1], y = anno_pos2[1], size = 5, family = "sans", 
+               colour = "gray", label ="1:1", parse=TRUE, hjust= 1,vjust=0) +
+      scale_y_continuous(limits =  c(min_xy,NA))+
+      scale_x_continuous(limits =  c(min_xy,NA))
+  }
+  return(list(plot,sma.result))
+  
+}
+
+### function tp gather results of multiple regression model
+tbl_reg_my=function(lm_obj,vif){
+  
+  sum=summary(lm_obj)
+  exp=sum[["coefficients"]]
+  if((ncol(lm_obj[["model"]])>2)&(vif==T)){
+    ## multiple regression, report vif
+     vif=as.data.frame(car::vif(lm_obj))
+     colnames(vif)="VIF"
+     exp=merge(exp,vif,by=0) 
+    
+  }else{
+   exp$x=rownames(exp)
+  }
+  colnames(exp)[1]="X"
+  exp=exp %>% 
+      rename("P-value"="Pr(>|t|)") %>% 
+      mutate(Y=as.character(lm_obj[["call"]][["formula"]][[2]]),
+             N.obs=nrow(lm_obj[["model"]]),
+             AIC=round(stats::AIC(lm_obj),3),
+             R2=round(sum$r.squared,3))
+  return(exp)
+}
+
+
+```
+
+## Main text figures
+
+
+
+### Fig.3(Table S3_1)
+```{r,fig.height=4,fig.width=10}
+## Read data
+div_sta_z <- read.csv(paste0(wd_path, "/div_sta_area.csv"), header = T)
+
+## get the limits for x and y axis
+x_lim <- as.numeric(range(c(div_sta_z$sstar_slope, div_sta_z$asar_slope)))
+y_lim <- as.numeric(range(div_sta_z$estar_slope))
+
+#### Relationship between estar_slope and sstar_slope #### 
+lmodel2(estar_slope ~ sstar_slope, data = div_sta_z, nperm = 999)
+StAR_SpAR.sma <- sma_fit_plot(x = div_sta_z$sstar_slope, y = div_sta_z$estar_slope, col = c("#0072B2", "#009E73"), pos = c("left", 0, 0, -0.07, "abs"), ref_line = T, theme = theme1, x_lim = x_lim, y_lim = y_lim)
+
+## plot
+StAR_SpAR.plot <- StAR_SpAR.sma[[1]] +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray", size = 0.5) +
+  ylab(bquote(atop(paste("Z "[EStAR]), NULL["(slope of ecosystem stability–area)"]))) +
+  xlab(bquote(atop(paste("Z "[SStAR]), NULL["(slope of species stability–area)"]))) +
+  geom_abline(intercept = 0, slope = 1, size = 1, color = "gray") +
+  labs(tag = "A", color = " ")
+
+## statistics from the standardized major axis regression
+StAR_SpAR.sta <- StAR_SpAR.sma[[2]]
+StAR_SpAR.sta$x <- "SStAR"
+
+#### Relationship between estar_slope and asar_slope #### 
+lmodel2(estar_slope ~ asar_slope, data = div_sta_z, nperm = 999)
+StAR_AsAR.sma <- sma_fit_plot(x = div_sta_z$asar_slope, y = div_sta_z$estar_slope, col = c("#0072B2", "#D55E00"), pos = c("left", 0, 0, -0.07, "abs"), ref_line = T, theme = theme1, x_lim = x_lim, y_lim = y_lim)
+
+## plot
+StAR_AsAR.plot <- StAR_AsAR.sma[[1]] +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray", size = 0.5) +
+  ylab(bquote(atop(paste("Z "[EStAR]), NULL["(slope of ecosystem stability–area)"]))) +
+  xlab(bquote(atop(paste("Z "[AsAR]), NULL["(slope of species asynchrony–area)"]))) +
+  geom_abline(intercept = 0, slope = 1, size = 1, color = "gray") +
+  labs(tag = "B", color = " ")
+
+## statistics from the standardized major axis regression
+StAR_AsAR.sta <- StAR_AsAR.sma[[2]]
+StAR_AsAR.sta$x <- "AsAR"
+
+####  combine figures&statistics  #### 
+ggarrange(StAR_SpAR.plot, StAR_AsAR.plot, nrow = 1)
+Fig3.sta <- rbind(StAR_SpAR.sta, StAR_AsAR.sta) %>% 
+  mutate(y="EStAR") %>% 
+  mutate(across(Intercept:R2,~round(.x,3)))
+
+```
+
+### Fig.4(Table S3_1)
+```{r,fig.width=14,fig.height=4}
+## Read data
+div_sta_z <- read.csv(paste0(wd_path, "/div_sta_area.csv"), header = T)
+
+####  Relationship between estar_slope and sar_ave_slope  #### 
+lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z, nperm = 999)
+StAR_SAR.sma <- sma_fit_plot(x = div_sta_z$sar_ave_slope, y = div_sta_z$estar_slope, col = c("#0072B2", "#0072B2"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+
+## plot
+StAR_SAR.plot <- StAR_SAR.sma[[1]] +
+  ylab(bquote(atop(paste("Z "[EStAR]), NULL["(slope of ecosystem stability–area)"]))) +
+  xlab(bquote(atop(paste("Z "[SAR]), NULL["(slope of species–area)"]))) +
+  labs(tag = "A", color = " ")
+
+## statistics
+StAR_SAR.sta <- StAR_SAR.sma[[2]]
+StAR_SAR.sta$y <- "EStAR"
+
+#### Relationship between sstar_slope and sar_ave_slope_slope  #### 
+lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z, nperm = 999)
+SpAR_SAR.sma <- sma_fit_plot(x = div_sta_z$sar_ave_slope, y = div_sta_z$sstar_slope, col = c("#009E73", "#009E73"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+
+## plot
+SpAR_SAR.plot <- SpAR_SAR.sma[[1]] +
+  ylab(bquote(atop(paste("Z "[SStAR]), NULL["(slope of species stability–area)"]))) +
+  xlab(bquote(atop(paste("Z "[SAR]), NULL["(slope of species–area)"]))) +
+  labs(tag = "B", color = " ")
+
+## statistics
+SpAR_SAR.sta <- SpAR_SAR.sma[[2]]
+SpAR_SAR.sta$y <- "SStAR"
+
+#### Relationship between asar_slope and sar_ave_slope_slope  #### 
+lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z, nperm = 999)
+AsAR_SAR.sma <- sma_fit_plot(x = div_sta_z$sar_ave_slope, y = div_sta_z$asar_slope, col = c("#D55E00", "#D55E00"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+
+## plot
+AsAR_SAR.plot <- AsAR_SAR.sma[[1]] +
+  ylab(bquote(atop(paste("Z "[AsAR]), NULL["(slope of species asynchrony–area)"]))) +
+  xlab(bquote(atop(paste("Z "[SAR]), NULL["(slope of species–area)"]))) +
+  labs(tag = "C", color = " ")
+
+## statistics
+AsAR_SAR.sta <- AsAR_SAR.sma[[2]]
+AsAR_SAR.sta$y <- "AsAR"
+
+####  combine figures&statistics  #### 
+ggarrange(StAR_SAR.plot, SpAR_SAR.plot, AsAR_SAR.plot, nrow = 1)
+ 
+Fig4.sta <- rbind(StAR_SAR.sta, SpAR_SAR.sta, AsAR_SAR.sta) %>% 
+  mutate(x="SAR")
+
+TableS3_1=bind_rows(Fig3.sta,Fig4.sta) %>% 
+  mutate(Ana="Main")
+```
+
+### Fig.5(Table S5, Fig.S12)
+
+```{r}
+
+## Read data
+div_sta_z <- read.csv(paste0(wd_path, "/div_sta_area.csv"), header = T)
+
+# We initiated a comprehensive model encompassing all potential pathway effects(Fig. S12).
+# After achieving a model with an optimal fit—indicated by a low AIC and p > 0.05 without 
+# omitting significant pathways (verified using Shipley's test of d-separation, Lefcheck 2016).
+# For our final SEM, we made selections based on the principle of model selection, 
+# prioritizing the lowest AIC.
+
+# the first full SEM (N = 31)
+SEM_AP_SR_full.m <- psem(
+  lm(sar_ave_slope ~ MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z), # empirical relationships
+  lm(sstar_slope ~  MAT_sd + MAP_mm + sar_ave_slope , na.action=na.omit, data = div_sta_z), # empirical relationships
+  lm(asar_slope ~  MAT_sd + MAP_mm+ sar_ave_slope , na.action=na.omit, data = div_sta_z), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z), # mathematical relationships, r2 = 1.00
+  asar_slope %~~% sstar_slope, 
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z
+)
+# To evaluate the model
+summary(SEM_AP_SR_full.m) 
+fisherC(SEM_AP_SR_full.m)
+AIC(SEM_AP_SR_full.m)
+dSep(SEM_AP_SR_full.m) 
+
+
+## we first remove those most non-significant path (e.g. P>0.5)
+SEM_AP_SR_full.m2 <- psem(
+  lm(sar_ave_slope ~ MAP_mm , na.action=na.omit, data = div_sta_z), # empirical relationships
+  lm(sstar_slope ~  MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z), # empirical relationships
+  lm(asar_slope ~  MAT_sd + sar_ave_slope , na.action=na.omit, data = div_sta_z), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z), # mathematical relationships, r2 = 1.00
+  asar_slope %~~% sstar_slope, 
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z
+)
+
+# To evaluate the model
+summary(SEM_AP_SR_full.m2) 
+fisherC(SEM_AP_SR_full.m)
+AIC(SEM_AP_SR_full.m2)
+dSep(SEM_AP_SR_full.m2) 
+
+#  then we only keep those significant and marginally significant path (P<0.1)
+# note that all paths of MAT_sd are non-significant, so this variable is removed from the SEM
+SEM_AP_SR.m <- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z),
+  
+  lm(sstar_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z),
+  
+  lm(estar_slope ~ sstar_slope + asar_slope, na.action=na.omit, data = div_sta_z),
+  asar_slope %~~% sstar_slope,
+  data = div_sta_z
+)
+# To evaluate the model
+summary(SEM_AP_SR.m) 
+fisherC(SEM_AP_SR.m)
+AIC(SEM_AP_SR.m)
+dSep(SEM_AP_SR.m) 
+
+TableS5=rbind(summary(SEM_AP_SR_full.m)[["coefficients"]][,c(2,1,3:5,7,8)]%>% mutate(model="full"),
+              summary(SEM_AP_SR.m)[["coefficients"]][,c(2,1,3:5,7,8)]%>% mutate(model="final")) %>% 
+              mutate(Significance=ifelse(P.Value<0.05,"*","ns"),
+                     across(c(Estimate,DF:Std.Estimate),~round(.x,3)))
+TableS5 %>% 
+  arrange(model,Predictor)
+```
+## Supplementary figures
+
+### Fig.S9
+```{r,fig.height=10,fig.width=10}
+## read data
+div_sta_area_full=read.csv(paste0(wd_path,"/div_sta_area_full_log2.csv"))
+div_sta_z <- read.csv(paste0(wd_path, "/div_sta_area.csv"), header = T)
+
+  ## colnames in div_sta_area_full and div_sta_z
+  vars=c("sr","com_sta","spe_sta","spe_asyn")
+  var2=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope" )
+  
+  ## labels for plot
+  labels=c("Plant species richness","Ecosystem stability","Species stability","Species asynchrony")
+  label2=c("SAR","EStAR","SStAR","AsAR")
+  
+  
+  s9.list=lapply(1:length(vars),function(i){
+    var=vars[i]
+    ## get the limits for y axis
+    ylim=range(log2(div_sta_area_full%>% select(var)))
+    range=ylim[2]-ylim[1]
+    ylim[[1]]=ylim[[1]]-0.05*range
+    ylim[[2]]=ylim[[2]]+0.1*range
+    
+    ## main plot- how X change with area
+    main=div_sta_area_full %>% 
+      ## log2 transfor
+      mutate(across(c(sr,spe_sta,spe_asyn,com_sta),~log2(.x)),
+             N=log2(area)) %>% 
+      
+      ggplot( aes_string(x ="N",y=var,color = "siteID",group = "siteID")) +
+      geom_point(size = 2.5, alpha = 0.3) +
+      geom_smooth(method = "lm", se=F) +
+      scale_y_continuous(limits =ylim)+
+      ylab(bquote(atop(.(labels[[i]]), NULL["("*log[2]*"-transformed)"]))) +
+      xlab(bquote(paste(Area *(NULL[log[2]*'(# plots)'])))) +
+      labs(tag = LETTERS[i]) +
+      theme1
+    
+    ## frequency plot for slope values
+    if(var2[[i]]=="estar_slope"){
+      p_inside=div_sta_z%>% 
+        ggplot() +
+        geom_histogram(aes_string(x=var2[[i]]),col="black",fill="gray",bins=8,boundary=0)+
+        scale_x_continuous(limits = c(0,NA))
+    }else{
+      p_inside=div_sta_z%>% 
+        ggplot() +
+        geom_histogram(aes_string(x=var2[[i]]),col="black",fill="gray",bins=7)
+    }
+    
+    inside=p_inside+
+      labs(y="Frequency",x=paste0("Slope of ",label2[[i]] ))+
+      scale_y_continuous(breaks = c(0,5,10),limits = c(0,NA),expand = expansion(add=c(0,NA)))+
+      theme_cowplot()+
+      theme(
+        axis.text.y = element_text(size = 8, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 8, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 10, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 10, family = "sans", color = "black"),
+        axis.ticks.length = unit(1, "mm"),
+        axis.line = element_line(color = "black", size = 0.5))
+    
+    ## combine two plot
+    tmp_plot=ggdraw()+
+      draw_plot(main)+
+      draw_plot(inside,x=0.3,y=0.72,width = .4,height = 0.175)
+    
+    return(tmp_plot)
+    
+  })
+  
+  ggarrange(s9.list[[1]],s9.list[[3]],s9.list[[2]],s9.list[[4]],widths = c(1,1.1,1,1),nrow=2,ncol=2)
+
+```
+
+### Fig. S10-11 (Table S4 & S6)
+
+```{r,fig.height=14,fig.width=14}
+div_sta_z <- read.csv(paste0(wd_path, "/div_sta_area.csv"), header = T)
+## standardized relevant variables for linear regression
+div_sta_z_lm=div_sta_z %>% 
+    ungroup() %>% 
+    mutate(across(c( MAT_C,MAT_sd,MAP_mm,MAP_sd,duration,N,mnn_dist),~my_scale(.x)),
+           ) 
+#### FigS10-Correlation plot ####
+# Correlation panel
+panel.cor <- function(x, y){
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- round(cor(x, y), digits=2)
+    tmp=cor.test(x,y)
+    
+    if(cor.test(x,y)[["p.value"]]<0.001){
+      txt=paste0(r,"***")
+    }else if(cor.test(x,y)[["p.value"]]<0.01){
+      txt=paste0(r,"**")
+    }else if(cor.test(x,y)[["p.value"]]<0.05){
+      txt=paste0(r,"*")
+    }
+    cex.cor <- 0.7/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * abs(r))
+}
+# Customize upper panel
+upper.panel<-function(x, y){
+  points(x,y, pch = 19)
+}
+# Create the plots
+pairs(div_sta_z_lm[,c("MAT_C","MAT_sd","MAP_mm","MAP_sd")] %>%
+               rename("Mean\n temperature"="MAT_C",
+                      "Temperature\n variation"="MAT_sd",
+                      'Mean\n precipitation'="MAP_mm",
+                      'Precipitation\n variation'="MAP_sd"
+                      ),
+      lower.panel = panel.cor,
+      upper.panel = upper.panel,cex.labels =1.5)
+
+
+#### Fig.S11 & Table S6-bivariate regression ####
+
+## col name of dependent variables in div_sta_z
+var.list=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope")
+## labels for plot
+label.list=c("SAR","EStAR","SStAR","AsAR")
+col.list=c("black","steelblue","seagreen4","darkorange2")
+
+S11.list=lapply(1:4,function(i){
+  var=var.list[i]
+  cl=col.list[i]
+  ## climatic variables
+  x.list=c("MAP_mm","MAP_sd","MAT_C","MAT_sd")
+  x.label=c('Mean precipitation (mm)','Precipitation variation',"Mean temperature","Temperature variation")
+  tmp.list=lapply(1:length(x.list), function(j){
+    x=x.list[j]
+    
+    ## linear regression on original scale, for visualization only
+    tmp.lm=lm(as.formula(paste0(var,"~",x)),data=div_sta_z)
+    
+    ## linear regression based on standardized variables, corresponding to the statistical results in Table S2
+    tmp.lm.z=lm(as.formula(paste0(var,"~",x)),data=div_sta_z_lm)
+    tmp.sta=as.data.frame(summary(tmp.lm.z)$coefficients)[2,]
+    tmp.sta$r2=summary(tmp.lm.z)[["r.squared"]]
+    tmp.sta=cbind(tmp.sta,data.frame(t(summary(tmp.lm.z)[["fstatistic"]])) %>% 
+                     rename(Fval=value))
+    tmp.sta=round(tmp.sta,3)
+    tmp.sta$y=label.list[[i]]
+    tmp.sta$x=x
+    
+    ## plot
+    P=tmp.sta$`Pr(>|t|)`
+    R2=tmp.sta$r2
+   if(tmp.sta$`Pr(>|t|)`<0.05){
+      tmp.plot=div_sta_z%>% 
+      cbind(predict(tmp.lm, interval = "confidence")) %>% 
+      ggplot(aes_string(x=x))+
+      geom_point(aes_string(y=var),col=cl,alpha=0.5,size=3)+
+      geom_ribbon( aes(ymin = lwr, ymax = upr), fill ="grey",alpha = .5) +
+      geom_line( aes(y = fit), size = 1.2,col=cl)
+    }else{
+     tmp.plot=div_sta_z%>% 
+      cbind(predict(tmp.lm, interval = "confidence")) %>% 
+      ggplot(aes_string(x=x))+
+      geom_point(aes_string(y=var),col=cl,alpha=0.5,size=3)+
+      geom_line( aes(y = fit), size = 1.2,col=cl,linetype="dashed")
+     
+    }
+    
+   ## add statistics  
+   tmp.plot=tmp.plot+
+   annotate(geom="text",label=deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P) == ~.(P))),
+                x = -Inf, y = Inf, hjust = 0, vjust = 1,col=cl,size=5, family = "sans", parse=TRUE)+
+      labs(y=bquote(Z[.(label.list[[i]])]))+
+      labs(tag = LETTERS[i+4*(j-1)]) +
+      theme1
+   
+   ## add axis title
+   if(x=="tmp_m"){
+       tmp.plot=tmp.plot+
+        labs(x=expression("Mean temperature" (degree*C)))
+    }else{
+       tmp.plot=tmp.plot+
+        labs(x=x.label[[j]])
+    }
+    return(list(tmp.plot,tmp.sta))
+  })
+  
+  ## combine plots and statistics
+  var.plot=ggarrange(tmp.list[[1]][[1]],tmp.list[[2]][[1]],tmp.list[[3]][[1]],tmp.list[[4]][[1]],ncol=1)
+  var.sta=rbindlist(lapply(tmp.list,function(x){x[[2]]}))
+  
+  return(list(var.plot,var.sta))
+})
+
+
+annotate_figure(ggarrange(S11.list[[1]][[1]],S11.list[[2]][[1]],S11.list[[3]][[1]],S11.list[[4]][[1]],vjust=1,widths=c(1,1,1,1),nrow=1,ncol=4))
+
+TableS6=rbindlist(lapply(S11.list,function(x){x[[2]]})) %>% 
+  arrange(y)
+
+
+#### Table S4-multivariate regression ####
+
+##we included the number of plots (N), observation duration (duration), mean nearest neighbor spatial distance(mnn_dist), and four climatic variables as covariates, in testing the relationships between scaling slopes of biodiversity (z_SAR) and stability (z_EStAR, z_SStAR, and z_AsAR). 
+## Shown are the final model after removing all variables with VIF >2
+
+## EstAR
+TableS4_1=tbl_reg_my(lm(estar_slope~sar_ave_slope+MAT_sd+N+duration+mnn_dist, data = div_sta_z_lm),T)
+
+## AsAR slope
+
+TableS4_2=tbl_reg_my(lm(asar_slope~sar_ave_slope+MAT_sd+N+duration+mnn_dist, data = div_sta_z_lm),T)
+
+## SStAR slope
+TableS4_3=tbl_reg_my(lm(sstar_slope~sar_ave_slope+MAP_mm+N+duration+mnn_dist, data = div_sta_z_lm),T)
+
+TableS4=rbind(TableS4_1,TableS4_2,TableS4_3) %>% 
+  select(Y,X,Estimate:VIF,R2,N.obs,AIC) %>% 
+  mutate(across(Estimate:AIC,~round(.x,3))) %>% 
+  mutate(X=factor(X,levels=c("MAT_sd","MAP_mm","duration","mnn_dist","N","sar_ave_slope")),
+         Y=factor(Y,levels=c("estar_slope","sstar_slope","asar_slope")))
+TableS4 %>% 
+  arrange(Y,X)
+
+```
+
+
+
+### Figure S14A & Table S3_2 
+
+```{r}
+## Sensitivity analyses: A standardized scale with 14 plots within 31 NEON sites continuously observed for >= 5 years, including with both herbaceous and woody species
+div_sta_z_14plots <- read.csv(paste0(wd_path, "/div_sta_area_14plots.csv"), header = T)
+
+#### Table 3_1 (sensitivity analyses corresponding to Fig.3&4) ####
+
+#### Relationship between estar_slope and sstar_slope #### 
+lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_14plots, nperm = 999)
+StAR_SpAR.sma <- sma_fit_plot(x = div_sta_z_14plots$sstar_slope, y = div_sta_z_14plots$estar_slope, col = c("#0072B2", "#009E73"), pos = c("left", 0, 0, -0.07, "abs"), ref_line = T, theme = theme1)
+
+## statistics from the standardized major axis regression
+StAR_SpAR.sta <- StAR_SpAR.sma[[2]]
+StAR_SpAR.sta$x <- "SStAR"
+
+#### Relationship between estar_slope and asar_slope #### 
+lmodel2(estar_slope ~ asar_slope, data = div_sta_z_14plots, nperm = 999)
+StAR_AsAR.sma <- sma_fit_plot(x = div_sta_z_14plots$asar_slope, y = div_sta_z_14plots$estar_slope, col = c("#0072B2", "#D55E00"), pos = c("left", 0, 0, -0.07, "abs"), ref_line = T, theme = theme1)
+
+## statistics from the standardized major axis regression
+StAR_AsAR.sta <- StAR_AsAR.sma[[2]]
+StAR_AsAR.sta$x <- "AsAR"
+
+####  Relationship between estar_slope and sar_ave_slope #### 
+lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_14plots, nperm = 999)
+StAR_SAR.sma <- sma_fit_plot(x = div_sta_z_14plots$sar_ave_slope, y = div_sta_z_14plots$estar_slope, col = c("#0072B2", "#0072B2"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+## statistics
+StAR_SAR.sta <- StAR_SAR.sma[[2]]
+StAR_SAR.sta$y <- "EStAR"
+
+#### Relationship between sstar_slope and sar_ave_slope_slope  #### 
+lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_14plots, nperm = 999)
+SpAR_SAR.sma <- sma_fit_plot(x = div_sta_z_14plots$sar_ave_slope, y = div_sta_z_14plots$sstar_slope, col = c("#009E73", "#009E73"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+
+## statistics
+SpAR_SAR.sta <- SpAR_SAR.sma[[2]]
+SpAR_SAR.sta$y <- "SStAR"
+
+#### Relationship between asar_slope and sar_ave_slope_slope  #### 
+lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_14plots, nperm = 999)
+AsAR_SAR.sma <- sma_fit_plot(x = div_sta_z_14plots$sar_ave_slope, y = div_sta_z_14plots$asar_slope, col = c("#D55E00", "#D55E00"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+
+## statistics
+AsAR_SAR.sta <- AsAR_SAR.sma[[2]]
+AsAR_SAR.sta$y <- "AsAR"
+
+####  combine statistics  #### 
+TableS3_2=rbind(rbind(StAR_SpAR.sta, StAR_AsAR.sta) %>%   mutate(y="EStAR"),
+                rbind(StAR_SAR.sta, SpAR_SAR.sta, AsAR_SAR.sta) %>%   mutate(x="SAR") )%>% 
+          mutate(Ana="14plots")
+
+#### Figure 14A (sensitivity analyses corresponding to Fig.5B) ####
+
+SEM_AP_SR.m <- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z_14plots),
+  lm(sstar_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z_14plots),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z_14plots),
+  lm(estar_slope ~ sstar_slope + asar_slope, na.action=na.omit, data = div_sta_z_14plots),
+  data = div_sta_z_14plots
+)
+# To evaluate the model
+summary(SEM_AP_SR.m) 
+fisherC(SEM_AP_SR.m)
+AIC(SEM_AP_SR.m)
+dSep(SEM_AP_SR.m) 
+```
+
+### Figure S14B & Table S3_3
+
+```{r}
+## Sensitivity analyses: The raw scale between 14~32 plots within 29 NEON sites including only herbaceous species 
+
+div_sta_z_herb <- read.csv(paste0(wd_path, "/div_sta_area_herb.csv"), header = T)
+
+
+#### Table S3 (sensitivity analyses corresponding to Fig.3&4) ####
+
+#### Relationship between estar_slope and sstar_slope #### 
+lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_herb, nperm = 999)
+StAR_SpAR.sma <- sma_fit_plot(x = div_sta_z_herb$sstar_slope, y = div_sta_z_herb$estar_slope, col = c("#0072B2", "#009E73"), pos = c("left", 0, 0, -0.07, "abs"), ref_line = T, theme = theme1)
+
+## statistics from the standardized major axis regression
+StAR_SpAR.sta <- StAR_SpAR.sma[[2]]
+StAR_SpAR.sta$x <- "SStAR"
+
+#### Relationship between estar_slope and asar_slope #### 
+lmodel2(estar_slope ~ asar_slope, data = div_sta_z_herb, nperm = 999)
+StAR_AsAR.sma <- sma_fit_plot(x = div_sta_z_herb$asar_slope, y = div_sta_z_herb$estar_slope, col = c("#0072B2", "#D55E00"), pos = c("left", 0, 0, -0.07, "abs"), ref_line = T, theme = theme1)
+
+## statistics from the standardized major axis regression
+StAR_AsAR.sta <- StAR_AsAR.sma[[2]]
+StAR_AsAR.sta$x <- "AsAR"
+
+####  Relationship between estar_slope and sar_ave_slope #### 
+lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_herb, nperm = 999)
+StAR_SAR.sma <- sma_fit_plot(x = div_sta_z_herb$sar_ave_slope, y = div_sta_z_herb$estar_slope, col = c("#0072B2", "#0072B2"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+## statistics
+StAR_SAR.sta <- StAR_SAR.sma[[2]]
+StAR_SAR.sta$y <- "EStAR"
+
+#### Relationship between sstar_slope and sar_ave_slope_slope  #### 
+lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_herb, nperm = 999)
+SpAR_SAR.sma <- sma_fit_plot(x = div_sta_z_herb$sar_ave_slope, y = div_sta_z_herb$sstar_slope, col = c("#009E73", "#009E73"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+
+## statistics
+SpAR_SAR.sta <- SpAR_SAR.sma[[2]]
+SpAR_SAR.sta$y <- "SStAR"
+
+#### Relationship between asar_slope and sar_ave_slope_slope  #### 
+lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_herb, nperm = 999)
+AsAR_SAR.sma <- sma_fit_plot(x = div_sta_z_herb$sar_ave_slope, y = div_sta_z_herb$asar_slope, col = c("#D55E00", "#D55E00"), pos = c("left", 1, 1, 0.1, "rel"), ref_line = F, theme = theme1)
+
+## statistics
+AsAR_SAR.sta <- AsAR_SAR.sma[[2]]
+AsAR_SAR.sta$y <- "AsAR"
+
+####  combine statistics  #### 
+TableS3_3=rbind(rbind(StAR_SpAR.sta, StAR_AsAR.sta) %>%   mutate(y="EStAR"),
+                rbind(StAR_SAR.sta, SpAR_SAR.sta, AsAR_SAR.sta) %>%   mutate(x="SAR") )%>% 
+          mutate(Ana="herbs")
+
+#### Figure 14B (sensitivity analyses corresponding to Fig.5B) ####
+SEM_AP_SR.m <- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z_herb),
+  lm(sstar_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z_herb),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z_herb),
+  lm(estar_slope ~ sstar_slope + asar_slope+sar_ave_slope, na.action=na.omit, data = div_sta_z_herb),
+  asar_slope %~~% sstar_slope, 
+  data = div_sta_z_herb
+)
+# To evaluate the model
+summary(SEM_AP_SR.m) 
+fisherC(SEM_AP_SR.m) 
+AIC(SEM_AP_SR.m)
+dSep(SEM_AP_SR.m)
+```
+
+### Figure S15
+```{r}
+
+## Sensitivity analyses: different definition of species stability
+
+div_sta_z_sst <- read.csv(paste0(wd_path, "/div_sta_area.csv"), header = T)
+
+#### Figure 15A  ####
+
+#### Relationship between values of species stability under different definitions #### 
+ x_lim=as.numeric(range(div_sta_z_sst$sstar_slope))
+ y_lim=as.numeric(range(div_sta_z_sst$sstar_ave_slope))
+    
+  sst_stt=sma_fit_plot(x=div_sta_z_sst$sstar_slope,y=div_sta_z_sst$sstar_ave_slope,col=c("#009E73","#009E73"),pos=c("left",0.4,1,0.1,"rel"),ref_line=T,theme=theme1,x_lim = x_lim,y_lim = y_lim)
+  CI_lw=round(sst_stt[[2]][,3],2)
+  CI_up=round(sst_stt[[2]][,4],2)
+  sst_stt[[1]]+
+    annotate("text", x = 0.02, y =0.45 , size = 5, family = "sans", 
+    colour ="#009E73", label =
+      deparse(bquote(~italic("95% CI") == ~"["~.(CI_lw)~","~.(CI_up)~"]")), parse=TRUE, hjust=0,vjust=1) +
+      ylab(bquote(atop(paste("Z "[SStAR]), NULL["based on SSt"^"'"~"(simple weighted mean)"])))+
+       xlab(bquote(atop(paste("Z "[SStAR]), NULL["based on SSt(weighted harmonic mean)"])))
+ 
+
+#### Figure 15B (sensitivity analyses corresponding to Fig.5B) ####
+
+SEM_AP_SR.m <- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z_sst),
+  lm(sstar_ave_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z_sst),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z_sst),
+  lm(estar_slope ~ sstar_ave_slope + asar_slope+MAP_mm, na.action=na.omit, data = div_sta_z_sst),
+ 
+  data = div_sta_z_sst
+)
+# To evaluate the model
+summary(SEM_AP_SR.m) 
+fisherC(SEM_AP_SR.m)
+AIC(SEM_AP_SR.m)
+dSep(SEM_AP_SR.m) 
+```
+
+### Figure S17
+```{r,fig.width=18,fig.height=8}
+## read data
+div_sta_area_full_rel=read.csv(paste0(wd_path,"/div_sta_area_full_log2_relative.csv"))
+div_sta_z_rel <- read.csv(paste0(wd_path, "/div_sta_area_relative.csv"), header = T)
+
+  ## colnames in div_sta_area_full and div_sta_z
+  vars=c("com_sta_MAT","spe_sta_MAT","com_sta_MAP","spe_sta_MAP")
+  var2=c("estar_slope","sstar_slope","estar_slope","sstar_slope")
+  var3=paste(var2,c("MAT","MAT","MAP","MAP"),sep="_")
+  
+  ## labels for plot
+  labels=c("Ecosystem stability","Species stability","Ecosystem stability","Species stability")
+  label2=c("EStAR","SStAR","EStAR","SStAR")
+  
+ 
+  s17.list=lapply(1:length(vars),function(i){
+    var=vars[i]
+    
+    ## get the limits for y axis
+    ylim=range(log2(div_sta_area_full_rel %>% select(var)))
+    range=ylim[2]-ylim[1]
+    ylim[[1]]=ylim[[1]]-0.05*range
+    ylim[[2]]=ylim[[2]]+0.1*range
+    
+    ## main plot- how X change with area
+    div_sta_area_full_rel%>% 
+      ## log2 transfor
+      mutate(across(c(spe_sta_MAT:com_sta_MAP),~log2(.x)),
+             N=log2(area)) %>% 
+      
+      ggplot( aes_string(x ="N",y=var,color = "siteID",group = "siteID")) +
+      geom_point(size = 2.5, alpha = 0.3) +
+      geom_smooth(method = "lm", se=F) +
+      scale_y_continuous(limits =ylim)+
+      ylab(bquote(atop(.(labels[[i]]), NULL["("*log[2]*"-transformed)"]))) +
+      xlab(bquote(paste(Area *(NULL[log[2]*'(# plots)'])))) +
+      labs(tag = LETTERS[i]) +
+      theme1
+    
+  
+  })
+  
+   ## colors
+  col.list= c("#0072B2","#009E73","#0072B2","#009E73")
+  
+ com.list=lapply( 1:length(var2),function(i){
+   y=var2[i]
+   x=var3[i]
+  dat_tmp=div_sta_z_rel %>%
+    dplyr::select(siteID,x,y) %>% 
+    rename(or=y,
+           rel=x)
+   sma_tmp=sma_fit_plot(x=dat_tmp$rel,y=dat_tmp$or,col=rep(col.list[i],2),pos=c("left",1,1,.1,"rel"),ref_line=T,theme=theme1)
+    plot_tmp=sma_tmp[[1]]+
+    ylab(bquote(atop(paste("Z"[.(label2[[i]])]), NULL["Original value"])))+
+     xlab(bquote(atop(paste("Z"[.(label2[[i]])]), NULL["Relative invariability"])))+
+      labs(tag=LETTERS[[i+4]])
+    
+    sma.sta=sma_tmp[[2]]
+    sma.sta$x=y
+    return(list(plot_tmp, sma.sta))
+})
+  
+  ggarrange(s17.list[[1]],s17.list[[2]],s17.list[[3]],s17.list[[4]],
+             com.list[[1]][[1]],com.list[[2]][[1]],com.list[[3]][[1]],com.list[[4]][[1]],nrow=2,ncol=4)
+
+```
+### Table S3
+```{r}
+TableS3=rbind(TableS3_1,TableS3_2,TableS3_3) %>% 
+     mutate(across(Intercept:R2,~round(.x,3)))
+TableS3
+
+```
+

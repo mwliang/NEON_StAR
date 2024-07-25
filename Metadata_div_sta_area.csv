@@ -1,0 +1,16 @@
+variables,descriptions
+siteID,the id of sites
+duration,the duration of data collection in this study
+start_year,the first year data collected in this study
+end_year,the last year data collected in this study
+sstar_slope,the log2-log2 slope of species stability
+asar_slope,the log2-log2 slope of species asynchrony
+estar_slope,the log2-log2 slope of ecosystem or community stability
+sar_ave_slope,the log2-log2 slope of plant species richness
+sstar_ave_slope,the log2-log2 slope of weighted species stability
+mnn_dist,the mean nearest neighbor spatial distance_km
+N,number of plots
+MAT_C,mean temperature (celsius)
+MAP_mm,mean precipitation (mm)
+MAT_sd,temperature variation
+MAP_sd,precipitation variation
