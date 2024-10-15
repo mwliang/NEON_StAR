@@ -1,0 +1,2148 @@
+---
+title: "StAR_empirical"
+author: "YQ"
+format: 
+  html:
+    toc: true
+    toc-depth: 6
+    number-sections: false
+    embed-resources: true
+    output-file: "StAR_empirical.html"
+
+execute:
+  fig.align: "center"
+
+linestretch: 1.5
+mainfont: Times New Roman
+fontsize: 12.5pt
+---
+## Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      fig.align = "center")
+
+rm(list = ls())
+
+## working directory
+wd_path="~"
+
+## library packges
+if (!"pacman" %in% rownames(installed.packages())) {
+  install.packages("pacman")
+}
+
+library(pacman)
+p_load(tidyverse,data.table,lmodel2,cowplot,piecewiseSEM,ggpubr)
+p_load(kableExtra)
+
+
+## theme for plots
+
+#the unit of linewidth is roughly 0.75*2.8=2.1 point
+#the unit of element_text is pts
+#the unit of annotate is mm=2.8 point
+theme1= theme_bw() +
+  theme(legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(colour = "black", size = 0.25),
+        panel.border = element_blank(),
+        axis.text.y = element_text(size = 6.25, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 6.25, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 8, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 8, family = "sans", color = "black"),
+        axis.ticks.length = unit(2, "pt"),
+        axis.ticks = element_line(color = "black", size = 0.2),
+        axis.line = element_line(color = "black", size = 0.25),
+        plot.tag = element_text(size = 10, family = "sans", color = "black",face = "bold"),
+        plot.margin = margin(t = .4,  # Top margin
+                             r = .4,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+
+```
+
+## Readme
+
+```{r}
+# For convenience, we wrapped up codes of main analyses and visualization as three functions (see the functions section below for details):
+
+# ds_scaling: function to visualize the spatial scaling patterns of diversity and stability as well as the distributions of different log-log slopes
+
+# st_par: function to analyze and visualize relationships between Z_EStAR and its partitioning components - Z_AsAR and Z_SStAR
+
+# div_st: function to analyze and visualize relationships between the spatial scaling of diversity (i.e. Z_SAR) and stability (i.e Z_EStAR, Z_AsAR, and Z_SStAR)
+
+# we also provided codes to run each standardized major axis regression model in corresponding parts
+
+# run all codeS in the "Functions" part first!!
+
+```
+
+
+## Functions 
+```{r}
+
+#### for z-score trans
+my_scale <- function(x){
+  x1 <- (x-mean(x))/sd(x)
+  return(x1)
+}
+
+#### function to visualize the spatial scaling patterns of diversity and stability #################
+
+#div_sta_full.data: data frame containing diversity and stability metrics at each area of each region; each row represents results of a region
+#star.data: data frame containing the log-log slope of estar,sstar,and asar; each row represents results of a region
+
+ds_scaling=function(div_sta_full.data,unit){
+ 
+  #### set labels for metrics
+  ## colnames in div_sta_full.data
+  vars=c("sr","com_sta","spe_sta","spe_asyn")
+  ## labels
+  labels=c("Species richness","Ecosystem stability","Average species stability","Species asynchrony")
+ 
+  #### plot the scaling patterns 
+  all_plot=lapply(1:length(vars),function(i){
+    var=vars[i]
+    
+    ## main plot
+    tmp_plot=div_sta_full.data %>% 
+      dplyr::mutate(across(c(sr,spe_sta,spe_asyn,com_sta),~log2(.x)),
+             N=log2(area),
+             region=as.factor(region)) %>% 
+      ggplot( aes_string(x ="N",y=var,color = "region",group = "region")) +
+      geom_point(size = 0.75, alpha = 0.5) +
+      geom_smooth(method = "lm", se=F,linewidth=0.3) +
+      ylab(bquote(atop(.(labels[[i]]), NULL["("*log[2]*"-transformed)"]))) +
+      xlab(bquote(paste(Area *(NULL[log[2]*'(# '*.(unit)*')'])))) +
+      #labs(tag = LETTERS[i]) +
+      theme1
+    
+    return(tmp_plot)
+    
+  })
+ 
+  return(all_plot)
+}
+
+
+### fit standardized major axis regression, summaries statistics and generate plot ##########
+  # x,y:vectors of independent and dependent variable
+  # pos:placement of annotate text("left" or "right")
+  # col: a list of 2; color for point and line,respectively
+  # ref_line: TRUE/FALSE; whether 1:1 line is presented (if TRUE, set the same range for x and y axis)
+
+sma_fit_plot=function(x,y,pos="left",col="black",ref_line="F"){
+
+  dat=data.frame(x=x,y=y)
+  
+  ### model fit and prediction ###########
+  sma.model=lmodel2(y ~x, data=dat, nperm=999)
+ 
+  ci <-ggpmisc:::predict.lmodel2(sma.model, method= 'SMA', interval= "confidence")
+  sma_preds <- cbind(dat, ci)
+  sma.result=cbind( sma.model$regression.results[sma.model$regression.results$Method== "SMA",c("Intercept","Slope")],sma.model$confidence.intervals[sma.model$confidence.intervals$Method== "SMA",c("2.5%-Slope","97.5%-Slope")])
+  sma.result$Pvalues=sma.model$P.param
+  sma.result$N=sma.model$n
+  sma.result$R2=sma.model$rsquare
+  ### plot ###########
+  
+  #### base plot 
+  lntype=ifelse(sma.model$P.param<0.05,"solid","blank")
+  plot <- ggplot() +
+      geom_point(data=dat,aes(x=x,y = y),size = 1.75, alpha = 0.5, color =col[1],stroke=0.25) +
+      geom_line(data = sma_preds, mapping = aes(x=x,y=fit),size = .5, color=col[2],linetype = lntype) 
+  
+  ## ribbon for significant fit
+  if(sma.model$P.param<0.05){
+      plot=plot+
+      geom_ribbon(mapping=aes(x=x,ymin = lwr, ymax = upr), alpha = 0.15, sma_preds) 
+  }
+      
+  #### annotation
+  R2=round( sma.model$rsquare,2)
+  p=ifelse(round(sma.model$P.param,3)==0,"< 0.001",paste0(" = ",round(sma.model$P.param,3)))
+  z=as.numeric(round(sma.model$regression.results[sma.model$regression.results$Method== "SMA","Slope"],2))
+  hjus=ifelse(pos=="left",0,1)
+  
+  ## we place the annotation at bottom left of (0,0) with 1:1 line and at the top left corner if not
+   if(ref_line){
+     anno_pos=c(0,0)
+    plot=plot+
+      annotate("text", x =anno_pos[1], y = anno_pos[2], size = 2.25, family = "sans", label= deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P)  ~.(p))),  color = col, parse=TRUE, hjust= hjus,vjust=1) +
+      annotate("text", x =anno_pos[1], y = anno_pos[2], size = 2.25, family = "sans", label =deparse(bquote(~italic(slope) == ~.(z))), parse=TRUE, colour = col, hjust=  hjus,vjust=2.3)+
+      #### 1:1 ref line
+      geom_abline(intercept = 0, slope = 1, size = 0.25, color='gray')
+   }else{
+     anno_pos=c(-Inf,Inf)
+    plot=plot+
+      annotate("text", x =anno_pos[1], y = anno_pos[2], size = 2.25, family = "sans", label= deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P)  ~.(p))),  color = col, parse=TRUE, hjust= hjus,vjust=1.5) +
+      annotate("text", x =anno_pos[1], y = anno_pos[2], size = 2.25, family = "sans", label =deparse(bquote(~italic(slope) == ~.(z))), parse=TRUE, colour = col, hjust=  hjus,vjust=3.5)
+   }
+  
+  return(list(plot,sma.result))
+
+ }
+
+
+#### function to analyze the relationship between Z_EStAR and its partitioning component-Z_AsAR and Z_SStAR  ############
+
+#star.data: data frame containing the log-log slope of estar,sstar,and asar; each row represents results of a region
+#list: whether sub-figures should be return as a list of ggplot objects or subplots in one ggarrange object (default)
+
+st_par=function(star.data,list=F){
+ 
+#### Relationship between estar_slope and sstar_slope 
+  StAR_SpAR.sma=sma_fit_plot(x=star.data$sstar_slope,y=star.data$estar_slope,col=c("#0072B2","#009E73"),ref_line=T)
+  
+  ## statistics from the standardized major axis regression
+  StAR_SpAR.sta=StAR_SpAR.sma[[2]]
+  StAR_SpAR.sta$X="Z_SStAR"
+  ## plot based on the standardized major axis regression
+  StAR_SpAR.plot=StAR_SpAR.sma[[1]]+
+    geom_vline(xintercept=0, linetype='dashed', color='gray', size=0.25) +
+    geom_hline(yintercept=0, linetype='dashed', color='gray', size=0.25) +
+    ylab(bquote(atop(paste("Z "[EStAR]), NULL["(slope of ecosystem stability–area)"]))) +
+    xlab(bquote(atop(paste("Z "[SStAR]), NULL["(slope of average species stability–area)"])))+
+    theme1
+  
+#### the relationship between estar_slope and asar_slope  
+  StAR_AsAR.sma=sma_fit_plot(x=star.data$asar_slope,y=star.data$estar_slope,col=c("#0072B2","#D55E00"),ref_line=T)
+  
+   ## statistics from the standardized major axis regression
+  StAR_AsAR.sta=StAR_AsAR.sma[[2]]
+  StAR_AsAR.sta$X="Z_AsAR"
+  ## plot based on the standardized major axis regression
+  StAR_AsAR.plot=StAR_AsAR.sma[[1]]+
+    geom_vline(xintercept=0, linetype='dashed', color='gray', size=0.25) +
+    geom_hline(yintercept=0, linetype='dashed', color='gray', size=0.25) +
+    ylab(bquote(atop(paste("Z "[EStAR]), NULL["(slope of ecosystem stability–area)"]))) +
+    xlab(bquote(atop(paste("Z "[AsAR]), NULL["(slope of species asynchrony–area)"])))+
+    theme1
+  
+#### we keep the same range of x,y limits for both plot
+   x_range=range(c(layer_scales(StAR_SpAR.plot)$x$range$range,layer_scales(StAR_AsAR.plot)$x$range$range))
+   y_range=range(c(layer_scales(StAR_SpAR.plot)$y$range$range,layer_scales(StAR_AsAR.plot)$y$range$range))
+   min_xy=min(c(x_range,y_range))
+   max_xy=max(c(x_range,y_range))
+  ## extent the limits  for adding annotation at c(0,0)
+   min_xy=min(min_xy,-0.1)
+   
+   StAR_SpAR.plot=StAR_SpAR.plot+
+      ## add annotation for 1:1 line
+     annotate("text", x = max_xy*0.94, y = max_xy*0.95, size = 1.8, family = "sans", 
+               colour = "gray", label ="1:1", parse=TRUE, hjust= 1,vjust=0)+
+     scale_x_continuous(limits = c(min_xy,max_xy))+
+     scale_y_continuous(limits = c(min_xy,max_xy))
+   StAR_AsAR.plot=StAR_AsAR.plot+
+      ## add annotation for 1:1 line
+     annotate("text", x = max_xy*0.94, y = max_xy*0.95, size = 1.8, family = "sans", 
+               colour = "gray", label ="1:1", parse=TRUE, hjust= 1,vjust=0)+
+     scale_x_continuous(limits = c(min_xy,max_xy))+
+     scale_y_continuous(limits = c(min_xy,max_xy))   
+ 
+  #### return plot and statistical results 
+   
+  ## Export the figures either a list of ggplots or subplots in one ggarrange object
+  if(list){
+     f=list(StAR_SpAR.plot, StAR_AsAR.plot)
+  }else{
+     f=ggarrange(StAR_SpAR.plot, StAR_AsAR.plot, nrow = 1,align = "hv")
+  }
+  
+  ## combine statistics
+   f.sta=rbind(StAR_SpAR.sta,StAR_AsAR.sta) %>% 
+     mutate(Y="Z_EStAR")
+ 
+   return(list(f,f.sta))
+}
+
+
+#### function to analyze and visualize the relationship between Z_EStAR, Z_AsAR, Z_SStAR, and Z_SAR  ############
+
+#star.data: data frame containing the log-log slope of estar,sstar,asar, and sar; each row represents results of a region
+#list: whether sub-figures should be return as a list of ggplot objects or subplots in one ggarrange object (default)
+
+div_st=function(star.data,list=F){
+  
+  #### the relationship between estar_slope and sar_slope  
+  StAR_SAR.sma=sma_fit_plot(x=star.data$sar_ave_slope,y=star.data$estar_slope,col=c("#0072B2","#0072B2"),ref_line=F)
+  
+  ## statistics from the standardized major axis regression
+  StAR_SAR.sta=StAR_SAR.sma[[2]]
+  StAR_SAR.sta$Y="Z_EStAR"
+  ## plot based on the standardized major axis regression
+  StAR_SAR.plot <-  StAR_SAR.sma[[1]]+
+    ylab(bquote(atop(paste("Z "[EStAR]), NULL["(slope of ecosystem stability–area)"]))) +
+    xlab(bquote(atop(paste("Z "[SAR]), NULL["(slope of species–area)"]))) +
+    theme1
+  
+  #### the relationship between sstar_slope and sar_slope
+  SpAR_SAR.sma=sma_fit_plot(x=star.data$sar_ave_slope,y=star.data$sstar_slope,col=c("#009E73","#009E73"),ref_line=F)
+  
+  ## statistics from the standardized major axis regression
+  SpAR_SAR.sta=SpAR_SAR.sma[[2]]
+  SpAR_SAR.sta$Y="Z_SStAR"
+ ## plot based on the standardized major axis regression
+  SpAR_SAR.plot <- SpAR_SAR.sma[[1]]+
+    ylab(bquote(atop(paste("Z "[SStAR]), NULL["(slope of average species stability–area)"]))) +
+    xlab(bquote(atop(paste("Z "[SAR]), NULL["(slope of species–area)"])))+
+    theme1
+  #####the relationship between asar_slope and sar_slope
+  AsAR_SAR.sma=sma_fit_plot(x=star.data$sar_ave_slope,y=star.data$asar_slope,col=c("#D55E00","#D55E00"),ref_line=F)
+  
+  ## statistics from the standardized major axis regression
+  AsAR_SAR.sta=AsAR_SAR.sma[[2]]
+  AsAR_SAR.sta$Y="Z_AsAR"
+  ## plot based on the standardized major axis regression
+  AsAR_SAR.plot <-AsAR_SAR.sma[[1]] +
+    ylab(bquote(atop(paste("Z "[AsAR]), NULL["(slope of species asynchrony–area)"]))) +
+    xlab(bquote(atop(paste("Z "[SAR]), NULL["(slope of species–area)"]))) +
+    theme1
+    
+  if(list){
+     f=list(StAR_SAR.plot, SpAR_SAR.plot, AsAR_SAR.plot)
+  }else{
+     f=ggarrange(StAR_SAR.plot, SpAR_SAR.plot, AsAR_SAR.plot,nrow=1,align = "hv")
+  }
+ 
+  f.sta=rbind(StAR_SAR.sta,SpAR_SAR.sta,AsAR_SAR.sta)%>% 
+     mutate(X="Z_SAR")
+   
+  return(list(f,f.sta))
+}
+
+#### functions to plot correlation matrix #############
+
+## Correlation panel
+panel.cor <- function(x, y){
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- round(cor(x, y), digits=2)
+    tmp=cor.test(x,y)
+    
+    if(cor.test(x,y)[["p.value"]]<0.001){
+      txt=paste0(r,"***")
+    }else if(cor.test(x,y)[["p.value"]]<0.01){
+      txt=paste0(r,"**")
+    }else if(cor.test(x,y)[["p.value"]]<0.05){
+      txt=paste0(r,"*")
+    }else{
+      txt=paste0(r,"")
+    }
+    cex.cor <- 0.7/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * abs(r))
+}
+# Customize upper panel
+upper.panel<-function(x, y){
+  points(x,y, pch = 19)
+}
+
+
+
+#### function to gather results of multi-variate regression model #########
+tbl_reg_my=function(lm_obj,vif){
+  
+  sum=summary(lm_obj)
+  exp=sum[["coefficients"]]
+  if((ncol(lm_obj[["model"]])>2)&(vif==T)){
+    ## multiple regression, report vif
+     vif=as.data.frame(car::vif(lm_obj))
+     colnames(vif)="VIF"
+     exp=merge(exp,vif,by=0) 
+    
+  }else{
+   exp$X=rownames(exp)
+  }
+  colnames(exp)[1]="X"
+  exp=exp %>% 
+      rename("P-value"="Pr(>|t|)") %>% 
+      mutate(Y=as.character(lm_obj[["call"]][["formula"]][[2]]),
+             N.obs=nrow(lm_obj[["model"]]),
+             AIC=round(stats::AIC(lm_obj),3),
+             R2=round(sum$r.squared,3))
+  return(exp)
+}
+
+
+```
+
+## Read data
+
+```{r}
+## see Readme.txt for descriptions about each file and column name
+
+#### Neon dataset ############
+
+##### Main analyses 
+# Study year range from 2013 to 2022
+# There are 3442 species,972 genus,180 families ,564 plots, 31 NEON sites
+# All plots have at least 6 Year observation
+# All regions have at least 14 plots with the same observation period
+div_sta_z_neon <- read.csv(paste0(wd_path, "/div_sta_area_neon.csv"), header = T)
+## standardized relevant variables for linear regression
+div_sta_z_neon_lm=div_sta_z_neon %>% 
+    ungroup() %>% 
+    mutate(across(c( MAT_C,MAT_sd,MAP_mm,MAP_sd,duration,N,mnn_dist,mnn_dist),~my_scale(.x))) 
+div_sta_area_neon=read.csv(paste0(wd_path,"/div_sta_area_full_log2_neon.csv"))
+site_neon=read.csv(paste0(wd_path,"/site_info_main_neon.csv"))
+
+##### Supplementary analyses 
+
+##### Standardized to 5-year continuous observation and rarefied to 14 plots/locations
+div_sta_z_neon_5year <- read.csv(paste0(wd_path, "/div_sta_area_neon_5year.csv"), header = T)
+site_neon_5year=read.csv(paste0(wd_path,"/site_info_main_neon_5year.csv"))
+
+##### Excluding woody species
+div_sta_z_neon_herb <- read.csv(paste0(wd_path, "/div_sta_area_neon_herb.csv"), header = T)
+
+##### Comparing different definitions of average species stability 
+div_sta_z_neon_sst <- read.csv(paste0(wd_path, "/div_sta_area_neon_sst.csv"), header = T)
+
+##### Based on average species stability and ecosystem stability defined as relative invariability, i.e. the ratio of species/ecosystem invariability to the temperature(tmp)/precipitation(pre) invariability within the local site
+div_sta_z_neon_tmp <- read.csv(paste0(wd_path, "/div_sta_area_neon_tmp.csv"), header = T)
+div_sta_z_neon_pre <- read.csv(paste0(wd_path, "/div_sta_area_neon_pre.csv"), header = T)
+
+div_sta_area_neon_tmp=read.csv(paste0(wd_path,"/div_sta_area_full_log2_neon_tmp.csv"))
+div_sta_area_neon_pre=read.csv(paste0(wd_path,"/div_sta_area_full_log2_neon_pre.csv"))
+
+#### Rivfishtime dataset ##########
+
+##### Main analyses 
+# Study year range from 1991 to 2018
+# There are 135 species,778  plots, 47  regions in total 
+# All plots have at least 6 Year observation 
+# All regions have at least 14 plots with the same observation period 
+# Scaling based on watercouse distance and abundance data
+div_sta_z_fish <- read.csv(paste0(wd_path, "/div_sta_area_fish.csv"), header = T)
+## standardized relevant variables for linear regression
+div_sta_z_fish_lm=div_sta_z_fish %>% 
+    ungroup() %>% 
+    mutate(across(c( MAT_C,MAT_sd,MAP_mm,MAP_sd,duration,N,mnn_dist,mnn_dist),~my_scale(.x))) 
+div_sta_area_fish=read.csv(paste0(wd_path,"/div_sta_area_full_log2_fish.csv"))
+site_fish=read.csv(paste0(wd_path,"/site_info_main_fish.csv"))
+
+##### Supplementary analyses 
+
+##### Standardized to 5-year continuous observation and rarefied to 14 plots/locations
+div_sta_z_fish_5year <- read.csv(paste0(wd_path, "/div_sta_area_fish_5year.csv"), header = T)
+site_fish_5year=read.csv(paste0(wd_path,"/site_info_main_fish_5year.csv"))
+
+##### Scaling based on Euclidean distances
+div_sta_z_fish_EU <- read.csv(paste0(wd_path, "/div_sta_area_fish_EU.csv"), header = T)
+
+##### Scaling based on biomass data
+##### Before removing rare species
+div_sta_z_fish_bio_full <- read.csv(paste0(wd_path, "/div_sta_area_fish_bio_full.csv"), header = T)
+#### after removing rare species
+div_sta_z_fish_bio <- read.csv(paste0(wd_path, "/div_sta_area_fish_bio.csv"), header = T)
+```
+
+## Main Analyses
+
+### Main Text Figures
+
+#### Fig.3-Z_{StAR} partition 
+
+```{r,fig.width=4,fig.height=4}
+#| message: false
+
+#### NEON
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_neon, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_neon, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.neon=st_par(div_sta_z_neon,list=T)
+
+#statistical results 
+st_par_sta.neon=st_par.neon[[2]] %>% mutate(Dataset="neon")
+#plots 
+st_par_plot.neon=st_par.neon[[1]] 
+
+#### RivfishTIME 
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_fish, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_fish, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.fish=st_par(div_sta_z_fish,list=T)
+
+#statistical results 
+st_par_sta.fish=st_par.fish[[2]] %>% mutate(Dataset="RivfishTIME")
+#plots 
+st_par_plot.fish=st_par.fish[[1]] 
+
+#### combine plots for Fig.3  
+
+ggarrange(st_par_plot.neon[[1]],st_par_plot.neon[[2]],st_par_plot.fish[[1]],st_par_plot.fish[[2]], align ="hv", nrow = 2,ncol=2,labels=LETTERS[1:4], font.label=list(color="black",size=10,family="sans"),hjust=0,vjust=1.25)
+ggsave(paste0(wd_path,"/figure/Figure_3.pdf"),height = 9.5,width =10,units = "cm",dpi=300)
+ggsave(paste0(wd_path,"/figure/Figure_3.png"),height = 9.5,width =10,units = "cm",dpi=300)
+
+```
+
+#### Fig.4-Z_{SAR}-Z_{StAR} Relationship
+```{r,fig.width=6,fig.height=4}
+
+#### NEON
+
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_neon, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_neon, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_neon, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.neon=div_st(div_sta_z_neon,list=T)
+
+#statistical results 
+div_st_sta.neon=div_st.neon[[2]] %>% mutate(Dataset="neon")
+#plots 
+div_st_plot.neon=div_st.neon[[1]] 
+
+#### RivfishTIME 
+
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_fish, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_fish, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_fish, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.fish=div_st(div_sta_z_fish,list=T)
+
+#statistical results 
+div_st_sta.fish=div_st.fish[[2]] %>% mutate(Dataset="RivfishTIME")
+#plots 
+div_st_plot.fish=div_st.fish[[1]] 
+
+
+#### combine plots for Fig.4  
+ggarrange( div_st_plot.neon[[1]],div_st_plot.neon[[2]],div_st_plot.neon[[3]],
+          div_st_plot.fish[[1]],div_st_plot.fish[[2]],div_st_plot.fish[[3]],
+          align ="hv", nrow = 2,ncol=3,heights = c(1,1),labels=c(LETTERS[1:6]), font.label=list(color="black",size=10,family="sans"),hjust=0,vjust=1.5)
+
+ggsave(paste0(wd_path,"/figure/Figure_4.pdf"),height = 10,width =16,units = "cm",dpi=300)
+ggsave(paste0(wd_path,"/figure/Figure_4.png"),height = 10,width =16,units = "cm",dpi=300)
+
+```
+
+##### Table S3-1
+```{r}
+TS3_1=rbind(st_par_sta.neon,div_st_sta.neon) %>% 
+  mutate(N_plot=paste(min(div_sta_z_neon$N),max(div_sta_z_neon$N),sep="-"))
+
+```
+
+##### Table S4-1
+```{r}
+
+TS4_1=rbind(st_par_sta.fish,div_st_sta.fish)  %>% 
+  mutate(N_plot=paste(min(div_sta_z_fish$N),max(div_sta_z_fish$N),sep="-"))
+```
+
+
+#### Fig.5B & Fig.S17-SEM NEON
+
+
+```{r}
+# 
+# We initiated a comprehensive model encompassing all potential pathway effects.
+# After achieving a model with an optimal fit—indicated by a low AIC and p > 0.05 without 
+# omitting significant pathways (verified using Shipley's test of d-separation, Lefcheck 2016).
+# For our final SEM, we made selections based on the principle of model selection, 
+# prioritizing the lowest AIC.
+
+# the first full SEM (N = 31)
+SEM_full.neon <- psem(
+  lm(sar_ave_slope ~ MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z_neon), # empirical relationships
+  lm(sstar_slope ~  MAT_sd + MAP_mm + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon), # empirical relationships
+  lm(asar_slope ~  MAT_sd + MAP_mm+ sar_ave_slope , na.action=na.omit, data = div_sta_z_neon), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z_neon), # mathematical relationships, r2 = 1.00
+  asar_slope %~~% sstar_slope, 
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon
+)
+# To evaluate the model
+#summary(SEM_full.neon,.progressBar = F) 
+sum.neon.full=summary(SEM_full.neon,.progressBar = F) 
+## we first remove those most non-significant path (e.g. P>0.5)
+SEM_full.neon2 <- psem(
+  lm(sar_ave_slope ~ MAP_mm , na.action=na.omit, data = div_sta_z_neon), # empirical relationships
+  lm(sstar_slope ~  MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z_neon), # empirical relationships
+  lm(asar_slope ~  MAT_sd + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z_neon), # mathematical relationships, r2 = 1.00
+  MAP_mm %~~% MAT_sd,
+   asar_slope %~~% sstar_slope, 
+  data = div_sta_z_neon
+)
+
+# To evaluate the model
+#summary(SEM_full.neon2,.progressBar = F) 
+
+#  then we only keep those significant and marginally significant path (P<0.1)
+# note that all paths of MAT_sd are non-significant
+SEM.neon<- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z_neon),
+  lm(sstar_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z_neon),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z_neon),
+  lm(estar_slope ~ sstar_slope + asar_slope, na.action=na.omit, data = div_sta_z_neon),
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon
+)
+# To evaluate the model
+summary(SEM.neon,.progressBar = F) 
+sum.neon=summary(SEM.neon,.progressBar = F) 
+```
+
+##### Table S9
+```{r}
+TableS9=rbind(sum.neon.full[["coefficients"]][,c(2,1,3:5,7,8)]%>% mutate(model="full"),
+              sum.neon[["coefficients"]][,c(2,1,3:5,7,8)]%>% mutate(model="final")) %>% 
+              mutate(Significance=ifelse(P.Value<0.05,"*","ns"),
+                     across(c(Estimate,DF:Std.Estimate),~round(.x,3)))
+knitr::kable(
+  TableS9 %>% 
+   mutate(P.Value=ifelse(round(P.Value,3)==0,"<0.001",round(P.Value,3))) %>% 
+   arrange(model,Predictor), align = 'c', digits = 3,booktabs = TRUE,size=8)
+```
+
+```{r}
+knitr::kable(sum.neon[["R2"]] %>% 
+               mutate(model="final") %>% 
+               rbind(sum.neon.full[["R2"]] %>% 
+               mutate(model="full") ), align = 'c', digits = 3,booktabs = TRUE,size=6,caption = "Individual R-squared")
+```
+
+
+```{r}
+knitr::kable(cbind(sum.neon[["Cstat"]],sum.neon[["AIC"]]) %>% 
+               mutate(model="final") %>% 
+               rbind(cbind(sum.neon.full[["Cstat"]],sum.neon.full[["AIC"]]) %>% 
+                      mutate(model="full")),
+               align = 'c', digits = 3,booktabs = TRUE,size=6,caption="Global goodness-of-fit")
+```
+
+
+
+##### Fig.5A- Whittaker plot
+
+```{r}
+#remotes::install_github("valentinitnelav/plotbiomes")
+p_load(plotbiomes,viridis)
+
+color_palette <- Ricklefs_colors
+names(color_palette) <- names(Ricklefs_colors)
+
+## Whittaker plot based on site mean annual temperature and precipitation
+F5A=ggplot2::ggplot() +
+    # add biome polygons
+    ggplot2::geom_polygon(data = Whittaker_biomes,
+                          ggplot2::aes(x    = temp_c,
+                                       y    = precp_cm,
+                                       fill = biome),
+                          # adjust polygon border
+                          colour = "gray98",
+                          size   = 0.25,alpha=0.55,show.legend = F) +
+  # fill the polygons with predefined colors
+    ggplot2::scale_fill_manual(name   = "Whittaker biomes",
+                               breaks = names(color_palette),
+                               labels = names(color_palette),
+                               values = color_palette
+                               ) +
+  # add the temperature - precipitation data points
+  geom_point(data = div_sta_z_neon, 
+             aes(x = MAT_C, 
+                 y = MAP_mm/10,
+                 size = estar_slope,
+                col=sar_ave_slope),
+             shape=19,
+             stroke=0,
+             alpha=0.5) +
+   scale_color_viridis(option = "C",direction = -1)+
+  scale_size(range=c(0.5,2.5))+
+  labs(col=expression(Z[SAR]),size=expression(Z[EStAR]) ,
+       x=expression("Mean annual temperature " ( degree*C)),
+        y='Mean annual precipitation (cm)')+
+  theme_bw() +
+  theme(
+     legend.background = element_rect(fill = NA), 
+     legend.text = element_text(size=6, family = "sans"),
+     legend.title  = element_text(size=6, family = "sans"),
+   
+     legend.key.width = unit(0.15, "cm"),
+     legend.key.height =   unit(0.2, "cm"),
+     legend.spacing.y =  unit(0.01, "cm"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.y = element_text(size = 6., family = "sans", color = "black"),
+        axis.text.x = element_text(size = 6., family = "sans", color = "black"),
+        axis.title.y = element_text(size = 7, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 7, family = "sans", color = "black"),
+        axis.ticks.length = unit(2, "pt"),
+        legend.margin=margin(10,0,0,0),
+        legend.box.margin=margin(0,1,0,-5),
+        axis.ticks = element_line(color = "black", size = 0.2),
+        axis.line = element_line(color = "black", size = 0.15),
+       plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .3,
+                             unit = "cm"))
+F5A_legend=get_legend(ggplot2::ggplot() +
+    # add biome polygons
+    ggplot2::geom_polygon(data = Whittaker_biomes,
+                          ggplot2::aes(x    = temp_c,
+                                       y    = precp_cm,
+                                       fill = biome),
+                          # adjust polygon border
+                          colour = "gray98",
+                          size   = 0,alpha=0.55,show.legend = T) +
+  # fill the polygons with predefined colors
+    ggplot2::scale_fill_manual(name   = "Whittaker biomes",
+                               breaks = names(color_palette),
+                               labels = names(color_palette),
+                               values = color_palette
+                               )  +
+  theme(
+     legend.background = element_rect(fill = NA), 
+      legend.key.height = unit(0.1, "cm"),
+      legend.key.width =  unit(0.2, "cm"),
+     legend.key.spacing.y = unit(0.05, "cm"),
+     legend.text = element_text(size=4., family = "sans",margin = margin(l=0.2)),
+     legend.title  = element_text(size=4.5, family = "sans",margin = margin(b=1))))
+  
+ggarrange(
+  ggdraw()+
+  draw_plot(F5A)+
+  draw_plot(F5A_legend,x=0,y=1,hjust=0.09,vjust=0.95,height = 0.55),
+   ggplot()+theme_void(),
+  nrow=1,ncol=2,widths = c(0.6,0.4),labels=LETTERS[1:2], font.label=list(color="black",size=10,family="sans"),hjust=0,vjust=1.25)
+ggsave(paste0(wd_path,"/figure/Figure_5.pdf"),height = 5,width =10,dpi=300,unit="cm")
+
+```
+
+
+
+### SM Figures
+
+##### Fig.S9-Scaling patterns 
+
+```{r,fig.width=8,fig.height=4}
+neon_scaling=ds_scaling(div_sta_area_neon,unit="plots")
+fish_scaling=ds_scaling(div_sta_area_fish,unit="locations")
+ggarrange(neon_scaling[[1]],neon_scaling[[2]],neon_scaling[[3]],neon_scaling[[4]],
+          fish_scaling[[1]],fish_scaling[[2]],fish_scaling[[3]],fish_scaling[[4]],nrow=2,ncol=4,
+          labels=LETTERS[1:8], font.label=list(color="black",size=10,family="sans"),hjust=0.1,vjust=1.25)
+ggsave(paste0(wd_path,"/figure/Figure_S9.pdf"),height = 8.25,width =18,dpi=300,units = "cm")
+ggsave(paste0(wd_path,"/figure/Figure_S9.png"),height = 8.25,width =18,dpi=300,units = "cm")
+
+```
+
+
+
+##### Fig.S10-Comparison
+
+
+```{r,fig.width=6,fig.height=4}
+## comparing the value range of log-log slopes across fish and plant
+
+## combine slope values in two dataset
+z_com=div_sta_z_fish[, c("sar_ave_slope","estar_slope","sstar_slope","asar_slope" )] %>% 
+       mutate(Dataset="fish") %>% 
+       rbind(
+         div_sta_z_neon[, c("sar_ave_slope","estar_slope","sstar_slope","asar_slope" )] %>% 
+         mutate(Dataset="plant")
+       ) %>% 
+  ungroup() %>% 
+  group_by(Dataset) %>% 
+  pivot_longer(cols = !Dataset,names_to = "z")%>% 
+  group_by(Dataset,z) %>% 
+  mutate(mean=mean(value)) %>% 
+  ungroup()
+
+kable(z_com %>% 
+   group_by(Dataset,z) %>% 
+  dplyr::summarise(across(value, list(min=min,max=max,mean = mean, median=median,n_pos=~
+                                        sum(.x>0),n_neg=~
+                                        sum(.x<0)), .names = "{.fn}")),digits = 2)
+
+```
+```{r,fig.width=6,fig.height=4.5}
+## perform t-test and visualize the result
+vars=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope" )
+labels=c(bquote(atop(paste("Z "[SAR]), NULL["(slope of species–area)"])),
+         bquote(atop(paste("Z "[EStAR]), NULL["(slope of ecosystem stability–area)"])),
+         bquote(atop(paste("Z "[SStAR]), NULL["(slope of average species stability–area)"])),
+         bquote(atop(paste("Z "[AsAR]), NULL["(slope of species asynchrony–area)"])))
+
+z_com_all=lapply(1:4,function(x){
+  
+   z_tmp=z_com %>% 
+    filter(z==vars[[x]]) %>% 
+     mutate(y=0)
+  
+   if(vars[[x]]=="sar_ave_slope"){
+      lg_pos=c(0.15,0.95)
+   }else{
+     lg_pos="none"
+   }
+  ## Perform t-test
+  t_test_result <- t.test(x = z_tmp$value[z_tmp$Dataset=="fish"],
+                          y=z_tmp$value[z_tmp$Dataset=="plant"], alternative = "two.sided")
+  # Extract t-test information
+  p_sign = case_when(
+    t_test_result$p.value<0.01~"**",
+    t_test_result$p.value<0.05~"*",
+    t_test_result$p.value<0.1~".",
+    .default = ""
+  )
+  z_m_plant=round(unique(z_tmp$mean[z_tmp$Dataset=="plant"]),2)
+  z_m_fish=round(unique(z_tmp$mean[z_tmp$Dataset=="fish"]),2)
+  mean_diff <- round(z_m_fish-z_m_plant, 2)
+ 
+  f.sta= data.frame(metrics=vars[x],NEON_mean=as.numeric(t_test_result$estimate[2]),
+                RivfishTIME_mean=as.numeric(t_test_result$estimate[1]),df=t_test_result$parameter,
+                t=t_test_result$statistic,Pvalues=t_test_result$p.value)
+   
+  ## plot
+  f=ggplot(z_tmp)+
+   
+    ## overlap distributions
+     geom_histogram(data=z_tmp[z_tmp$Dataset=="plant",],mapping=aes(x=value,y= after_stat(count / sum(count))),binwidth = 0.02,boundary=0,alpha=0.3,fill="#009E73",col="#009E73",linewidth=0.15)+
+     geom_histogram(data=z_tmp[z_tmp$Dataset=="fish",],mapping=aes( x=value,y = after_stat(count / sum(count))),binwidth = 0.02,boundary=0,alpha=0.3,fill="#D55E00",col="#D55E00",linewidth=0.15)+
+    geom_vline(aes(xintercept = z_m_plant), linetype =    "dashed", size = 0.25,col="#009E73") +
+    geom_vline(aes(xintercept = z_m_fish),     linetype = "dashed", size = 0.25,col="#D55E00") +
+     scale_y_continuous(limits = c(0,NA),expand = expansion(add=c(0,NA)), labels = scales::label_number(accuracy = 0.01))+
+     scale_x_continuous(expand = expansion(add=c(0,0.05)), labels = scales::label_number(accuracy = 0.01))+
+    
+    # Manually add a legend
+    geom_bar(aes(x=mean,y=y,fill=Dataset,col=Dataset),size=0,stat="identity",alpha=0.4)+
+    scale_fill_manual(values = c("fish" = "#D55E00", "plant" ="#009E73" )) +
+    scale_color_manual(values = c("fish" = "#D55E00", "plant" ="#009E73" ))
+      
+     yrange= diff(layer_scales(f)$y$range$range)
+     xrange= diff(layer_scales(f)$x$range$range)
+     ymax=layer_scales(f)$y$range$range[2]
+     xmax=layer_scales(f)$x$range$range[2]
+     ## add labels and adjust theme
+     f=f+
+    ## show t test result
+     annotate("text", x =xmax-0.25*xrange, y = ymax, size = 1.9, family = "sans", label= deparse(bquote(bar(Z[fish]) ==~.(z_m_fish))),   parse=TRUE, hjust= 0,vjust=1,col="#D55E00") +
+    annotate("text", x =xmax-0.25*xrange, y = ymax-0.12*yrange, size = 1.9, family = "sans", label= deparse(bquote(bar(Z[plant]) ==~.(z_m_plant))),   parse=TRUE, hjust= 0,vjust=1,col="#009E73") +
+    annotate("text", x =xmax-0.25*xrange, y = ymax-0.24*yrange, size = 1.9, family = "sans", label= deparse(bquote(Delta ==~.(mean_diff)~.(p_sign))),   parse=TRUE, hjust= 0,vjust=1) +
+       labs(y="Probability density")+
+       xlab(labels[[x]])+
+      theme1+
+      theme(
+        panel.background = element_blank(),
+        legend.position =lg_pos,
+        legend.key.width = unit(0.3, "cm"),
+        legend.key.height=unit(0.1, "cm"),
+        legend.text = element_text(size=6, family = "sans"),
+        legend.title  = element_text(size=0, family = "sans"),
+        legend.background = element_rect(fill="transparent"))
+  
+  return(list(f,f.sta))
+    
+})
+
+z_com_sta=rbindlist(lapply(1:4,function(x){
+  z_com_all[[x]][[2]]
+}))  
+kable(z_com_sta,align = "c",digits = 3)
+#### combine plots 
+ggarrange(z_com_all[[1]][[1]],z_com_all[[2]][[1]],z_com_all[[3]][[1]],z_com_all[[4]][[1]],
+          align ="hv", nrow = 2,ncol=2,labels=LETTERS[1:4], font.label=list(color="black",family = "sans",size=10),hjust=0.,vjust=1.25)
+ggsave(paste0(wd_path,"/figure/Figure_S10.pdf"),height = 8,width =10,dpi=300,units = "cm")
+ggsave(paste0(wd_path,"/figure/Figure_S10.png"),height = 8,width =10,dpi=300,units = "cm")
+
+```
+
+#### Temporal cover
+
+###### Fig.S11A-NEON
+
+```{r,fig.width=8,fig.height=10}
+## get temporal distribution for each site
+time_neon=site_neon %>% 
+  select(Site,time) %>% 
+  distinct() %>% 
+  separate_rows(time,sep=",") %>% 
+  mutate(time=as.numeric(time))
+
+## histogram
+# breaks
+bk=sort(unique(div_sta_z_neon$duration))
+
+S11_A1=div_sta_z_neon %>% 
+ggplot(aes(x=duration))+
+  geom_histogram(col="black",fill="gray",binwidth = 1,size=0.25)+
+  scale_x_continuous(breaks=bk)+
+ coord_cartesian(xlim = range(bk),expand = T)+
+   coord_cartesian(ylim =c(0,NA),expand = F)+
+  labs(x="Temporal duration(year)",y="Number of Sites")+
+  theme1+
+  theme(panel.background = element_blank())+
+  theme(
+         axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .4,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+## tile plot
+ S11_A2=time_neon %>%  
+     mutate(N="yes")%>%
+     ggplot()+
+     geom_tile(aes(x=time,y=factor(Site),fill=N),show.legend = F,col="white")+
+     scale_fill_manual(values=c("steelblue"))+
+     labs(y=NULL,x="Year")+
+     scale_x_continuous(breaks = unique(time_neon$time),expand = expansion(add=c(0,0)))+
+     theme1+
+     theme(
+         axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5,angle = 45, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))+
+     labs(y="Site")
+ 
+ S11_A=ggarrange(S11_A1,S11_A2,heights = c(1,3),ncol=1)
+ 
+
+
+```
+
+
+###### Fig.S12A-RivfishTIME
+
+```{r,fig.width=10,fig.height=12}
+## get temporal distribution for each site
+time_fish=site_fish %>% 
+  select(Basin,time) %>% 
+  distinct() %>% 
+  separate_rows(time,sep=",") %>% 
+  mutate(time=as.numeric(time))
+
+## histogram
+# breaks
+bk=c(6,9,12,15,18,21,24)
+
+S12_A1=div_sta_z_fish %>% 
+ggplot(aes(x=duration))+
+  geom_histogram(col="black",fill="gray",binwidth = 3,size=0.25)+
+  scale_x_continuous(breaks=bk)+
+ coord_cartesian(xlim = range(bk),expand = T)+
+   coord_cartesian(ylim =c(0,NA),expand = F)+
+  labs(x="Temporal duration(year)",y="Number of Basins")+
+  theme1+
+  theme(panel.background = element_blank())+
+  theme(
+         axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .4,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+## tile plot
+ S12_A2=time_fish %>%  
+     mutate(N="yes")%>%
+     ggplot()+
+     geom_tile(aes(x=time,y=factor(Basin),fill=N),show.legend = F,col="white")+
+     scale_fill_manual(values=c("steelblue"))+
+     labs(y=NULL,x="Year")+
+     scale_x_continuous(breaks = seq(min(unique(time_fish$time)),max(unique(time_fish$time)),by=2),expand = expansion(add=c(0,0)))+
+     theme1+
+     theme(
+        axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5,angle = 45, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))+
+     labs(y="Basin")
+S12_A=ggarrange(S12_A1,S12_A2,heights = c(1,3.3),ncol=1)
+ 
+
+```
+
+#### Fig.S13-Relative invariability 
+
+
+```{r}
+### scaling patterns 
+neon_scaling_tmp=ds_scaling(div_sta_area_neon_tmp,unit="plots")
+neon_scaling_pre=ds_scaling(div_sta_area_neon_pre,unit="plots")
+
+
+### compare the scaling slopes based on definitions of invariability and relative invariability
+div_sta_z_neon_relative=div_sta_z_neon %>% 
+  ungroup() %>% 
+              select(region,sstar_slope,estar_slope) %>% 
+  left_join(div_sta_z_neon_pre %>% 
+              ungroup() %>% 
+              select(region,sstar_slope,estar_slope) %>% 
+              rename(sstar_slope_pre=sstar_slope,
+                     estar_slope_pre=estar_slope),by="region"
+              ) %>% 
+  left_join(div_sta_z_neon_tmp %>% 
+              ungroup() %>% 
+              select(region,sstar_slope,estar_slope) %>% 
+              rename(sstar_slope_tmp=sstar_slope,
+                     estar_slope_tmp=estar_slope),by="region"
+              ) 
+var=c("estar_slope","sstar_slope")
+label=c("estar_slope"="EStAR","sstar_slope"="SStAR") 
+col=c("estar_slope"="#0072B2","sstar_slope"="#009E73")
+i=1;env="tmp"
+com_list=lapply(c("tmp","pre"),function(env){
+  lapply(var, function(v){
+   lab=label[v]
+   sma_fit_plot(x=unlist(div_sta_z_neon_relative[,paste(v,env,sep="_")]),y=unlist(div_sta_z_neon_relative[,v]),col=rep(col[v],2),ref_line=F)[[1]]+
+      geom_abline(intercept = 0, slope = 1, size = 0.5, color='gray')+
+      ## add annotation for 1:1 line
+      annotate("text", x =  Inf, y =  Inf, size = 2, family = "sans", 
+                   colour = "gray", label ="1:1", parse=TRUE, hjust= 2,vjust=1.5)+
+      ylab(bquote(atop(paste("Z "[.(lab)]), NULL["Original value"]))) +
+      xlab(bquote(atop(paste("Z "[.(lab)]), NULL["Relative invariability"])))+
+      
+      theme1
+      
+  })
+})
+ 
+ggarrange(neon_scaling_tmp[[2]],neon_scaling_tmp[[3]],neon_scaling_pre[[2]],neon_scaling_pre[[3]],
+          com_list[[1]][[1]],com_list[[1]][[2]],com_list[[2]][[1]],com_list[[2]][[2]],nrow=2,ncol=4, align ="hv", 
+          labels=LETTERS[1:8], font.label=list(color="black",size=10,family="sans"),hjust=0.2,vjust=1.25)
+ggsave(paste0(wd_path,"/figure/Figure_S13.pdf"),height = 9,width =18,dpi=300,units = "cm")
+ggsave(paste0(wd_path,"/figure/Figure_S13.png"),height = 9,width =18,dpi=300,units = "cm")
+```
+
+
+#### Fig.S14-Correlation matrix among Cimatic variables
+
+##### Fig.S14A-NEON
+```{r,fig.height=6,fig.width=6}
+
+## somehow the export function only work in R console, not Quarto trunk
+#pdf(paste0(wd_path,"/figure/Figure_S14A.pdf"),width =4.5,height = 4.5)
+
+pairs(div_sta_z_neon[,c("MAT_C","MAT_sd","MAP_mm","MAP_sd")] %>%
+        rename("Mean\n temperature"="MAT_C",
+               "Temperature\n variation"="MAT_sd",
+               'Mean\n precipitation'="MAP_mm",
+               'Precipitation\n variation'="MAP_sd"
+        ),
+      lower.panel = panel.cor,
+      upper.panel = upper.panel,cex.labels =1)
+#dev.off()
+
+
+```
+
+##### Fig.S14B-RivfishTIME
+```{r,fig.height=6,fig.width=6}
+## somehow the export only work in console, not R trunk
+#pdf(paste0(wd_path,"/figure/Figure_S14B.pdf"),width =4.5,height = 4.5)
+pairs(div_sta_z_fish[,c("MAT_C","MAT_sd","MAP_mm","MAP_sd")] %>%
+        rename("Mean\n temperature"="MAT_C",
+               "Temperature\n variation"="MAT_sd",
+               'Mean\n precipitation'="MAP_mm",
+               'Precipitation\n variation'="MAP_sd"
+        ),
+      lower.panel = panel.cor,
+      upper.panel = upper.panel,cex.labels =1)
+#dev.off()
+
+```
+
+
+
+#### Bivariate analyses betwwen climatic variable and scaling exponents of diversity/stability
+
+Note that climatic variables are shown in raw scale in figures; see below for standardized effects
+
+##### Fig.S15-NEON
+
+```{r,fig.height=8,fig.width=8}
+var.list=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope")
+label.list=c("SAR","EStAR","SStAR","AsAR")
+col.list=c("black","steelblue","seagreen4","darkorange2")
+
+S15.list=lapply(1:4,function(i){
+  var=var.list[i]
+  cl=col.list[i]
+  x.list=c("MAP_mm","MAP_sd","MAT_C","MAT_sd")
+  x.label=c('Mean precipitation (mm)','Precipitation variation',"Mean temperature","Temperature variation")
+  tmp.list=lapply(1:length(x.list), function(j){
+    x=x.list[j]
+    ## linear regression
+    tmp.lm=lm(as.formula(paste0(var,"~",x)),data=div_sta_z_neon)
+    tmp.lm.z=lm(as.formula(paste0(var,"~",x)),data=div_sta_z_neon)
+    tmp.sta=as.data.frame(summary(tmp.lm.z)$coefficients)[2,]
+    tmp.sta$r2=summary(tmp.lm.z)[["r.squared"]]
+    tmp.sta=round(tmp.sta,3)
+    ## plot
+    P=tmp.sta$`Pr(>|t|)`
+    R2=tmp.sta$r2
+   if(tmp.sta$`Pr(>|t|)`<0.05){
+      tmp.plot=div_sta_z_neon%>% 
+     
+    cbind(predict(tmp.lm, interval = "confidence")) %>% 
+    ggplot(aes_string(x=x))+
+    geom_point(aes_string(y=var),col=cl,alpha=0.5,size=1.5)+
+    geom_ribbon( aes(ymin = lwr, ymax = upr), fill ="grey",alpha = .5) +
+    geom_line( aes(y = fit), size = 0.5,col=cl)+
+    annotate(geom="text",label=deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P) == ~.(P))),
+              x = -Inf, y = Inf, hjust = 0, vjust = 1,col=cl,size=2.3, family = "sans", parse=TRUE)+
+    labs(y=bquote(Z[.(label.list[[i]])]))+
+    labs(tag = LETTERS[i+4*(j-1)]) +
+    theme1+
+    theme(
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+    }else{
+     tmp.plot=div_sta_z_neon%>% 
+     
+      cbind(predict(tmp.lm, interval = "confidence")) %>% 
+      ggplot(aes_string(x=x))+
+      geom_point(aes_string(y=var),col=cl,alpha=0.5,size=1.5)+
+        geom_line( aes(y = fit), size = 0.5,col=cl,linetype="dashed")+
+      annotate(geom="text",label=deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P) == ~.(P))),
+                x = -Inf, y = Inf, hjust = 0, vjust = 1,col=cl,size=2.3, family = "sans", parse=TRUE)+
+      labs(y=bquote(Z[.(label.list[[i]])]))+
+      labs(tag = LETTERS[i+4*(j-1)]) +
+      theme1+
+    theme(
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+    }
+   if(x=="MAT_C"){
+       tmp.plot=tmp.plot+
+        labs(x=expression("Mean temperature" (degree*C)))
+    }else{
+       tmp.plot=tmp.plot+
+        labs(x=x.label[[j]])
+    }
+    return(tmp.plot)
+  })
+  
+  var.plot=ggarrange(tmp.list[[1]],tmp.list[[2]],tmp.list[[3]],tmp.list[[4]],ncol=1,align = "hv")
+ 
+  return(var.plot)
+})
+
+
+annotate_figure(ggarrange(S15.list[[1]],S15.list[[2]],S15.list[[3]],S15.list[[4]],align = "hv",widths=c(1,1,1,1),nrow=1,ncol=4))
+ggsave(paste0(wd_path,"/figure/Figure_S15.pdf"),height = 18,width =18,dpi=300,units = "cm")
+ggsave(paste0(wd_path,"/figure/Figure_S15.png"),height = 18,width =18,dpi=300,units = "cm")
+```
+
+##### Table S7-NEON
+```{r}
+##### Table S7-bivariate analyses between climatic variable and scaling exponents of diversity/stability
+
+var.list=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope")
+label.list=c("SAR","EStAR","SStAR","AsAR")
+col.list=c("black","steelblue","seagreen4","darkorange2")
+
+TS7.list=lapply(1:4,function(i){
+  var=var.list[i]
+  cl=col.list[i]
+  x.list=c("MAP_mm","MAP_sd","MAT_C","MAT_sd")
+ 
+  tmp.list=lapply(1:length(x.list), function(j){
+    x=x.list[j]
+    ## linear regression
+    tmp.lm.z=lm(as.formula(paste0(var,"~",x)),data=div_sta_z_neon_lm)
+    tmp.sta=as.data.frame(summary(tmp.lm.z)$coefficients)[2,]
+    tmp.sta$r2=summary(tmp.lm.z)[["r.squared"]]
+     tmp.sta=cbind(tmp.sta,data.frame(t(summary(tmp.lm.z)[["fstatistic"]])) %>% 
+                     rename(Fval=value))
+    tmp.sta=round(tmp.sta,3)
+    tmp.sta$Y=label.list[[i]]
+    tmp.sta$X=x
+    ## plot
+    P=tmp.sta$`Pr(>|t|)`
+    R2=tmp.sta$r2
+    return(tmp.sta)
+  })
+  
+   var.sta=rbindlist(tmp.list)
+  return(var.sta)
+})
+
+TS7=rbindlist(TS7.list)
+```
+
+##### Fig.S16-RivfishTIME
+
+```{r,fig.height=8,fig.width=8}
+var.list=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope")
+label.list=c("SAR","EStAR","SStAR","AsAR")
+col.list=c("black","steelblue","seagreen4","darkorange2")
+
+S16.list=lapply(1:4,function(i){
+  var=var.list[i]
+  cl=col.list[i]
+  x.list=c("MAP_mm","MAP_sd","MAT_C","MAT_sd")
+  x.label=c('Mean precipitation (mm)','Precipitation variation',"Mean temperature","Temperature variation")
+  tmp.list=lapply(1:length(x.list), function(j){
+    x=x.list[j]
+    ## linear regression
+    tmp.lm=lm(as.formula(paste0(var,"~",x)),data=div_sta_z_fish)
+    tmp.lm.z=lm(as.formula(paste0(var,"~",x)),data=div_sta_z_fish)
+
+    tmp.sta=as.data.frame(summary(tmp.lm.z)$coefficients)[2,]
+    tmp.sta$r2=summary(tmp.lm.z)[["r.squared"]]
+    tmp.sta=round(tmp.sta,3)
+    ## plot
+    P=tmp.sta$`Pr(>|t|)`
+    R2=tmp.sta$r2
+   if(tmp.sta$`Pr(>|t|)`<0.05){
+      tmp.plot=div_sta_z_fish%>% 
+     
+    cbind(predict(tmp.lm, interval = "confidence")) %>% 
+    ggplot(aes_string(x=x))+
+    geom_point(aes_string(y=var),col=cl,alpha=0.5,size=1.5)+
+    geom_ribbon( aes(ymin = lwr, ymax = upr), fill ="grey",alpha = .5) +
+    geom_line( aes(y = fit), size = 0.5,col=cl)+
+    annotate(geom="text",label=deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P) == ~.(P))),
+              x = -Inf, y = Inf, hjust = 0, vjust = 1,col=cl,size=2.3, family = "sans", parse=TRUE)+
+    labs(y=bquote(Z[.(label.list[[i]])]))+
+    labs(tag = LETTERS[i+4*(j-1)]) +
+    theme1+
+    theme(
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+    }else{
+     tmp.plot=div_sta_z_fish%>% 
+     
+      cbind(predict(tmp.lm, interval = "confidence")) %>% 
+      ggplot(aes_string(x=x))+
+      geom_point(aes_string(y=var),col=cl,alpha=0.5,size=1.5)+
+    geom_line( aes(y = fit), size = 0.5,col=cl,linetype="dashed")+
+    annotate(geom="text",label=deparse(bquote(~italic(R^2) == ~.(R2)~","~ italic(P) == ~.(P))),
+              x = -Inf, y = Inf, hjust = 0, vjust = 1,col=cl,size=2.3, family = "sans", parse=TRUE)+
+           labs(y=bquote(Z[.(label.list[[i]])]))+
+      labs(tag = LETTERS[i+4*(j-1)]) +
+      theme1+
+    theme(
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+    }
+   if(x=="MAT_C"){
+       tmp.plot=tmp.plot+
+        labs(x=expression("Mean temperature" (degree*C)))
+    }else{
+       tmp.plot=tmp.plot+
+        labs(x=x.label[[j]])
+    }
+    return(tmp.plot)
+  })
+  
+  var.plot=ggarrange(tmp.list[[1]],tmp.list[[2]],tmp.list[[3]],tmp.list[[4]],ncol=1)
+ 
+  return(var.plot)
+})
+
+
+annotate_figure(ggarrange(S16.list[[1]],S16.list[[2]],S16.list[[3]],S16.list[[4]],vjust=1,widths=c(1,1,1,1),nrow=1,ncol=4))
+ggsave(paste0(wd_path,"/figure/Figure_S16.pdf"),height = 18,width =18,dpi=300,units = "cm")
+ggsave(paste0(wd_path,"/figure/Figure_S16.png"),height = 18,width =18,dpi=300,units = "cm")
+```
+
+##### Table S8-RivfishTIME
+```{r}
+##### Table S8-bivariate analyses between climatic variable and scaling exponents of diversity/stability
+
+var.list=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope")
+label.list=c("SAR","EStAR","SStAR","AsAR")
+col.list=c("black","steelblue","seagreen4","darkorange2")
+
+TS8.list=lapply(1:4,function(i){
+  var=var.list[i]
+  cl=col.list[i]
+  x.list=c("MAP_mm","MAP_sd","MAT_C","MAT_sd")
+ 
+  tmp.list=lapply(1:length(x.list), function(j){
+    x=x.list[j]
+    ## linear regression
+    tmp.lm.z=lm(as.formula(paste0(var,"~",x)),data=div_sta_z_fish_lm)
+    tmp.sta=as.data.frame(summary(tmp.lm.z)$coefficients)[2,]
+    tmp.sta$r2=summary(tmp.lm.z)[["r.squared"]]
+     tmp.sta=cbind(tmp.sta,data.frame(t(summary(tmp.lm.z)[["fstatistic"]])) %>% 
+                     rename(Fval=value))
+    tmp.sta=round(tmp.sta,3)
+    tmp.sta$Y=label.list[[i]]
+    tmp.sta$X=x
+    ## plot
+    P=tmp.sta$`Pr(>|t|)`
+    R2=tmp.sta$r2
+    return(tmp.sta)
+  })
+  
+   var.sta=rbindlist(tmp.list)
+  return(var.sta)
+})
+
+TS8=rbindlist(TS8.list)
+```
+
+
+#### Multivriate regression
+
+Since no climatic variable show significant influence on the spatial scaling pattern of fish communities, in below analyses, we only included climatic variables for NEON dataset
+
+##### Table S5-NEON
+
+```{r}
+
+knitr::kable(div_sta_z_neon %>% 
+      dplyr::select(region,MAT_C,MAT_sd,MAP_mm,MAP_sd,duration,N,mnn_dist,mnn_dist) %>% 
+      group_by(region) %>% 
+      pivot_longer(cols = !region) %>% 
+     dplyr:: ungroup() %>% 
+      group_by(name) %>% 
+      dplyr::summarise(across(value, list(min=min,max=max,mean = mean, median=median), .names = "{.fn}")), align = 'c', digits = 1,booktabs = TRUE,size=6)
+
+```
+
+
+```{r}
+##we included the number of plots (N), observation duration (duration), mean nearest neighbor spatial distance(mnn_dist), and four climatic variables as covariates, in testing the relationships between scaling slopes of biodiversity (z_SAR) and stability (z_EStAR, z_SStAR, and z_AsAR). 
+## Shown are the final model after removing all variables with VIF >2
+## SAR
+TableS5_0=tbl_reg_my(lm(sar_ave_slope~MAT_sd+N+duration+mnn_dist, data = div_sta_z_neon_lm),T)
+
+## EstAR
+TableS5_1=tbl_reg_my(lm(estar_slope~sar_ave_slope+MAT_sd+N+duration+mnn_dist, data = div_sta_z_neon_lm),T)
+
+## AsAR slope
+
+TableS5_2=tbl_reg_my(lm(asar_slope~sar_ave_slope+MAT_sd+N+duration+mnn_dist, data = div_sta_z_neon_lm),T)
+
+## SStAR slope
+TableS5_3=tbl_reg_my(lm(sstar_slope~sar_ave_slope+MAP_mm+N+duration+mnn_dist, data = div_sta_z_neon_lm),T)
+
+
+TableS5=rbind(TableS5_0,TableS5_1,TableS5_2,TableS5_3) %>% 
+  select(Y,X,Estimate:VIF,R2,N.obs,AIC) %>% 
+  mutate(across(Estimate:AIC,~round(.x,3))) %>% 
+  mutate(X=factor(X,levels=c("MAT_sd","MAP_mm","duration","mnn_dist","N","sar_ave_slope")),
+         Y=factor(Y,levels=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope")))
+
+```
+
+##### Table S6-RivfishTIME
+
+
+```{r}
+
+knitr::kable(div_sta_z_fish %>% 
+      dplyr::select(region,MAT_C,MAT_sd,MAP_mm,MAP_sd,duration,N,mnn_dist,mnn_dist) %>% 
+      group_by(region) %>% 
+      pivot_longer(cols = !region) %>% 
+     dplyr:: ungroup() %>% 
+      group_by(name) %>% 
+      dplyr::summarise(across(value, list(min=min,max=max,mean = mean, median=median), .names = "{.fn}")), align = 'c', digits = 1,booktabs = TRUE,size=6)
+
+```
+
+```{r}
+## SAR
+TableS6_0=tbl_reg_my(lm(sar_ave_slope~MAT_sd+N+duration+mnn_dist, data = div_sta_z_fish_lm),T)
+
+
+## EstAR
+TableS6_1=tbl_reg_my(lm(estar_slope~sar_ave_slope+MAT_sd+N+duration+mnn_dist, data = div_sta_z_fish_lm),T)
+
+## AsAR slope
+
+TableS6_2=tbl_reg_my(lm(asar_slope~sar_ave_slope+MAT_sd+N+duration+mnn_dist, data = div_sta_z_fish_lm),T)
+
+## SStAR slope
+TableS6_3=tbl_reg_my(lm(sstar_slope~sar_ave_slope+MAT_sd+N+duration+mnn_dist, data = div_sta_z_fish_lm),T)
+
+TableS6=rbind(TableS6_0,TableS6_1,TableS6_2,TableS6_3) %>% 
+  select(Y,X,Estimate:VIF,R2,N.obs,AIC) %>% 
+  mutate(across(Estimate:AIC,~round(.x,3))) %>% 
+  mutate(X=factor(X,levels=c("MAT_sd","MAP_mm","duration","mnn_dist","N","sar_ave_slope")),
+         Y=factor(Y,levels=c("sar_ave_slope","estar_slope","sstar_slope","asar_slope")))
+```
+
+## Supplementary analyses
+
+### Neon
+
+#### 5-year continuous & 14 plots
+
+##### Fig.S11B-Temporal cover
+
+```{r,fig.width=5,fig.height=6}
+## get temporal distribution for each site
+time_neon_5year=site_neon_5year %>% 
+  select(Site,time) %>% 
+  distinct() %>% 
+  separate_rows(time,sep=",") %>% 
+  mutate(time=as.numeric(time))
+
+## histogram
+# breaks
+bk=sort(unique(div_sta_z_neon_5year$duration))
+
+S11_B1=div_sta_z_neon_5year %>% 
+ggplot(aes(x=duration))+
+  geom_histogram(col="black",fill="gray",binwidth = 1,size=0.25)+
+  scale_x_continuous(breaks=bk)+
+ coord_cartesian(xlim = range(bk),expand = T)+
+   coord_cartesian(ylim =c(0,NA),expand = F)+
+  labs(x="Temporal duration(year)",y="Number of Sites")+
+  theme1+
+  theme(panel.background = element_blank())+
+    theme(
+         axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .4,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+## tile plot
+ S11_B2=time_neon_5year %>%  
+     mutate(N="yes")%>%
+     ggplot()+
+     geom_tile(aes(x=time,y=factor(Site),fill=N),show.legend = F,col="white")+
+     scale_fill_manual(values=c("steelblue"))+
+     labs(y=NULL,x="Year")+
+     scale_x_continuous(breaks = unique(time_neon_5year$time),expand = expansion(add=c(0,0)))+
+     theme1+
+     theme(
+         axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5,angle = 45, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))+
+     labs(y="Site")
+S11_B=ggarrange(S11_B1,S11_B2,heights = c(1,3),ncol=1)
+ggarrange(S11_A,S11_B, align ="hv", nrow = 1,ncol=2,labels=LETTERS[1:2], font.label=list(color="black",size=10,family="sans"),hjust=0,vjust=1.25)
+ggsave(paste0(wd_path,"/figure/Figure_S11.pdf"),height = 9,width =10,units = "cm",dpi=300)
+ggsave(paste0(wd_path,"/figure/Figure_S11.png"),height = 9,width =10,units = "cm",dpi=300)
+
+
+```
+
+##### Table S3-2
+
+###### Z_{StAR} partition 
+
+```{r,fig.width=4,fig.height=2}
+#| message: false
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_neon_5year, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_neon_5year, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.neon_5year=st_par(div_sta_z_neon_5year,list=F)
+
+#statistical results 
+st_par_sta.neon_5year=st_par.neon_5year[[2]] %>% mutate(Dataset="neon_5year")
+#plots 
+st_par.neon_5year[[1]] 
+```
+
+###### Z_{SAR}-Z_{StAR} Relationship
+
+```{r,fig.width=6,fig.height=2}
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_neon_5year, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_neon_5year, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_neon_5year, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.neon_5year=div_st(div_sta_z_neon_5year,list=F)
+
+#statistical results 
+div_st_sta.neon_5year=div_st.neon_5year[[2]] %>% mutate(Dataset="neon_5year")
+#plots 
+div_st.neon_5year[[1]] 
+
+
+
+```
+
+
+```{r}
+TS3_2=rbind(st_par_sta.neon_5year,div_st_sta.neon_5year) %>% 
+  mutate(N_plot=paste(min(div_sta_z_neon_5year$N),max(div_sta_z_neon_5year$N),sep="-"))
+
+
+```
+
+##### Fig.S18A-SEM
+
+```{r}
+# 
+# We initiated a comprehensive model encompassing all potential pathway effects.
+# After achieving a model with an optimal fit—indicated by a low AIC and p > 0.05 without 
+# omitting significant pathways (verified using Shipley's test of d-separation, Lefcheck 2016).
+# For our final SEM, we made selections based on the principle of model selection, 
+# prioritizing the lowest AIC.
+
+# the first full SEM (N = 31)
+SEM_full.neon_5year <- psem(
+  lm(sar_ave_slope ~ MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z_neon_5year), # empirical relationships
+  lm(sstar_slope ~  MAT_sd + MAP_mm + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_5year), # empirical relationships
+  lm(asar_slope ~  MAT_sd + MAP_mm+ sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_5year), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z_neon_5year), # mathematical relationships, r2 = 1.00
+  asar_slope %~~% sstar_slope, 
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon_5year
+)
+# To evaluate the model
+#summary(SEM_full.neon_5year,.progressBar = F) 
+
+## we first remove those most non-significant path (e.g. P>0.5)
+SEM_full.neon_5year2 <- psem(
+  lm(sar_ave_slope ~ MAP_mm , na.action=na.omit, data = div_sta_z_neon_5year), # empirical relationships
+  lm(sstar_slope ~  MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z_neon_5year), # empirical relationships
+  lm(asar_slope ~  MAT_sd + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_5year), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z_neon_5year), # mathematical relationships, r2 = 1.00
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon_5year
+)
+
+# To evaluate the model
+#summary(SEM_full.neon_5year2,.progressBar = F) 
+
+#  then we only keep those significant and marginally significant path (P<0.1)
+# note that all paths of MAT_sd are non-significant
+SEM.neon_5year<- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z_neon_5year),
+  lm(sstar_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z_neon_5year),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z_neon_5year),
+  lm(estar_slope ~ sstar_slope + asar_slope, na.action=na.omit, data = div_sta_z_neon_5year),
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon_5year
+)
+# To evaluate the model
+summary(SEM.neon_5year,.progressBar = F) 
+sum.neon_5year=summary(SEM.neon_5year,.progressBar = F) 
+```
+
+
+```{r}
+knitr::kable(sum.neon_5year[["coefficients"]][,c(2,1,3:5,7,8)]%>% 
+              mutate(Significance=ifelse(P.Value<0.05,"*","ns"),
+                     across(c(Estimate,DF:Std.Estimate),~round(.x,3))) , align = 'c', digits = 3,booktabs = TRUE,size=6)
+```
+
+```{r}
+knitr::kable(sum.neon_5year[["R2"]]  , align = 'c', digits = 3,booktabs = TRUE,size=6,caption = "Individual R-squared")
+```
+
+```{r}
+knitr::kable(cbind(sum.neon_5year[["Cstat"]],sum.neon_5year[["AIC"]]) ,
+               align = 'c', digits = 3,booktabs = TRUE,size=6,caption="Global goodness-of-fit")
+```
+
+
+#### Herbs only
+
+##### Table S3-3
+
+###### Z_{StAR} partition 
+
+```{r,fig.width=4,fig.height=2}
+#| message: false
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_neon_herb, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_neon_herb, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.neon_herb=st_par(div_sta_z_neon_herb,list=F)
+
+#statistical results 
+st_par_sta.neon_herb=st_par.neon_herb[[2]] %>% mutate(Dataset="neon_herb")
+#plots 
+st_par.neon_herb[[1]] 
+```
+
+###### Z_{SAR}-Z_{StAR} Relationship
+
+```{r,fig.width=6,fig.height=2}
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_neon_herb, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_neon_herb, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_neon_herb, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.neon_herb=div_st(div_sta_z_neon_herb,list=F)
+
+#statistical results 
+div_st_sta.neon_herb=div_st.neon_herb[[2]] %>% mutate(Dataset="neon_herb")
+#plots 
+div_st.neon_herb[[1]] 
+
+```
+
+```{r}
+TS3_3=rbind(st_par_sta.neon_herb,div_st_sta.neon_herb) %>% 
+  mutate(N_plot=paste(min(div_sta_z_neon_herb$N),max(div_sta_z_neon_herb$N),sep="-"))
+```
+
+##### Fig.S18B-SEM 
+
+```{r}
+# 
+# We initiated a comprehensive model encompassing all potential pathway effects.
+# After achieving a model with an optimal fit—indicated by a low AIC and p > 0.05 without 
+# omitting significant pathways (verified using Shipley's test of d-separation, Lefcheck 2016).
+# For our final SEM, we made selections based on the principle of model selection, 
+# prioritizing the lowest AIC.
+
+# the first full SEM (N = 31)
+SEM_full.neon_herb <- psem(
+  lm(sar_ave_slope ~ MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z_neon_herb), # empirical relationships
+  lm(sstar_slope ~  MAT_sd + MAP_mm + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_herb), # empirical relationships
+  lm(asar_slope ~  MAT_sd + MAP_mm+ sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_herb), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z_neon_herb), # mathematical relationships, r2 = 1.00
+  asar_slope %~~% sstar_slope, 
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon_herb
+)
+# To evaluate the model
+#summary(SEM_full.neon_herb,.progressBar = F) 
+
+## we first remove those most non-significant path (e.g. P>0.5)
+SEM_full.neon_herb2 <- psem(
+  lm(sar_ave_slope ~ MAP_mm , na.action=na.omit, data = div_sta_z_neon_herb), # empirical relationships
+  lm(sstar_slope ~  sar_ave_slope + MAP_mm , na.action=na.omit, data = div_sta_z_neon_herb), # empirical relationships
+  lm(asar_slope ~  MAT_sd + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_herb), # empirical relationships
+  lm(estar_slope ~ sstar_slope + asar_slope , na.action=na.omit, data = div_sta_z_neon_herb), # mathematical relationships, r2 = 1.00
+  MAP_mm %~~% MAT_sd,
+  asar_slope %~~% sstar_slope, 
+  data = div_sta_z_neon_herb
+)
+
+# To evaluate the model
+#summary(SEM_full.neon_herb2,.progressBar = F) 
+
+#  then we only keep those significant and marginally significant path (P<0.1)
+# note that all paths of MAT_sd are non-significant
+SEM.neon_herb<- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z_neon_herb),
+  lm(sstar_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z_neon_herb),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z_neon_herb),
+  lm(estar_slope ~ sstar_slope + asar_slope, na.action=na.omit, data = div_sta_z_neon_herb),
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon_herb
+)
+# To evaluate the model
+summary(SEM.neon_herb,.progressBar = F) 
+sum.neon_herb=summary(SEM.neon_herb,.progressBar = F) 
+```
+
+```{r}
+knitr::kable(sum.neon_herb[["coefficients"]][,c(2,1,3:5,7,8)]%>% 
+              mutate(Significance=ifelse(P.Value<0.05,"*","ns"),
+                     across(c(Estimate,DF:Std.Estimate),~round(.x,3))) , align = 'c', digits = 3,booktabs = TRUE,size=6)
+```
+
+```{r}
+knitr::kable(sum.neon_herb[["R2"]]  , align = 'c', digits = 3,booktabs = TRUE,size=6,caption = "Individual R-squared")
+```
+
+```{r}
+knitr::kable(cbind(sum.neon_herb[["Cstat"]],sum.neon_herb[["AIC"]]) ,
+               align = 'c', digits = 3,booktabs = TRUE,size=6,caption="Global goodness-of-fit")
+```
+
+
+#### Definition of species stability
+
+##### Fig.S19A-definition of species stability
+```{r,fig.height=3,fig.width=3}
+
+ x_lim=as.numeric(range(div_sta_z_neon_sst$sstar_slope))
+ y_lim=as.numeric(range(div_sta_z_neon_sst$sstar_ave_slope))
+    
+# the relationship between estar_slope and sstar_slope
+  sst_stt=sma_fit_plot(x=div_sta_z_neon_sst$sstar_slope,y=div_sta_z_neon_sst$sstar_ave_slope,col=c("#009E73","#009E73"),ref_line=F)
+  CI_lw=paste0(" = [",paste(round(sst_stt[[2]][,3:4],2),collapse = ","),"]")
+  CI_lw=round(sst_stt[[2]][,3],2)
+  CI_up=round(sst_stt[[2]][,4],2)
+  
+ggarrange(
+  sst_stt[[1]]+
+  geom_abline(intercept = 0, slope = 1, size = 0.5, color='gray')+
+  ## add annotation for 1:1 line
+  annotate("text", x =  0.26, y =  0.27, size = 2.25, family = "sans", 
+               colour = "gray", label ="1:1", parse=TRUE, hjust= 1,vjust=0)+
+  annotate("text", x = -Inf, y =0.425 , size = 2.25, family = "sans", 
+  colour ="#009E73", label =
+    deparse(bquote(~italic("95% CI") == ~"["~.(CI_lw)~","~.(CI_up)~"]")), parse=TRUE, hjust=0,vjust=1) +
+    ylab(bquote(atop(paste("Z "[SStAR]), NULL["based on SSt"^"'"~"(simple weighted mean)"])))+
+    xlab(bquote(atop(paste("Z "[SStAR]), NULL["based on SSt(weighted harmonic mean)"])))+
+    theme1+
+    theme( 
+       axis.text.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 7.5, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 7.5, family = "sans", color = "black"),
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))+  xlim(c(0,0.27)),
+   ggplot()+theme_void(),
+  nrow=1,ncol=2,widths = c(0.5,0.5),labels=LETTERS[1:2], font.label=list(color="black",size=10,family="sans"),hjust=0,vjust=1.25)
+
+
+ggsave(paste0(wd_path,"/figure/Figure_S19.pdf"),height = 5,width =10,units = "cm",dpi=300)
+kable(sst_stt[[2]],digits = 2, align = 'c')
+
+```
+
+
+##### Fig.S19B-SEM
+
+
+```{r}
+# 
+# We initiated a comprehensive model encompassing all potential pathway effects.
+# After achieving a model with an optimal fit—indicated by a low AIC and p > 0.05 without 
+# omitting significant pathways (verified using Shipley's test of d-separation, Lefcheck 2016).
+# For our final SEM, we made selections based on the principle of model selection, 
+# prioritizing the lowest AIC.
+
+# the first full SEM (N = 31)
+SEM_full.neon_sst <- psem(
+  lm(sar_ave_slope ~ MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z_neon_sst), # empirical relationships
+  lm(sstar_ave_slope ~  MAT_sd + MAP_mm + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_sst), # empirical relationships
+  lm(asar_slope ~  MAT_sd + MAP_mm+ sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_sst), # empirical relationships
+  lm(estar_slope ~ sstar_ave_slope + asar_slope , na.action=na.omit, data = div_sta_z_neon_sst), # mathematical relationships, r2 = 1.00
+  asar_slope %~~% sstar_ave_slope, 
+  MAP_mm %~~% MAT_sd,
+  data = div_sta_z_neon_sst
+)
+# To evaluate the model
+#summary(SEM_full.neon_sst,.progressBar = F) 
+
+## we first remove those most non-significant path (e.g. P>0.5)
+SEM_full.neon_sst2 <- psem(
+  lm(sar_ave_slope ~ MAP_mm , na.action=na.omit, data = div_sta_z_neon_sst), # empirical relationships
+  lm(sstar_ave_slope ~  MAT_sd + MAP_mm , na.action=na.omit, data = div_sta_z_neon_sst), # empirical relationships
+  lm(asar_slope ~  MAT_sd + sar_ave_slope , na.action=na.omit, data = div_sta_z_neon_sst), # empirical relationships
+  lm(estar_slope ~ sstar_ave_slope + asar_slope+ MAP_mm , na.action=na.omit, data = div_sta_z_neon_sst), # mathematical relationships, r2 = 1.00
+  MAP_mm %~~% MAT_sd,
+  asar_slope %~~% sstar_ave_slope, 
+  data = div_sta_z_neon_sst
+)
+
+# To evaluate the model
+#summary(SEM_full.neon_sst2,.progressBar = F) 
+
+#  then we only keep those significant and marginally significant path (P<0.1)
+# note that all paths of MAT_sd are non-significant
+SEM.neon_sst<- psem(
+  lm(sar_ave_slope ~  MAP_mm, na.action=na.omit, data = div_sta_z_neon_sst),
+  lm(sstar_ave_slope ~ MAP_mm, na.action=na.omit, data = div_sta_z_neon_sst),
+  lm(asar_slope ~ sar_ave_slope, na.action=na.omit, data = div_sta_z_neon_sst),
+  lm(estar_slope ~ sstar_ave_slope + asar_slope+MAP_mm, na.action=na.omit, data = div_sta_z_neon_sst),
+  MAP_mm %~~% MAT_sd, 
+  data = div_sta_z_neon_sst
+)
+# To evaluate the model
+summary(SEM.neon_sst,.progressBar = F) 
+sum.neon_sst=summary(SEM.neon_sst,.progressBar = F) 
+```
+
+```{r}
+knitr::kable(sum.neon_sst[["coefficients"]][,c(2,1,3:5,7,8)]%>% 
+              mutate(Significance=ifelse(P.Value<0.05,"*","ns"),
+                     across(c(Estimate,DF:Std.Estimate),~round(.x,3))), align = 'c', digits = 3,booktabs = TRUE,size=6)
+```
+
+```{r}
+knitr::kable(sum.neon_sst[["R2"]]  , align = 'c', digits = 3,booktabs = TRUE,size=6,caption = "Individual R-squared")
+```
+
+```{r}
+knitr::kable(cbind(sum.neon_sst[["Cstat"]],sum.neon_sst[["AIC"]]) ,
+               align = 'c', digits = 3,booktabs = TRUE,size=6,caption="Global goodness-of-fit")
+```
+
+
+
+### Rivfishtime
+
+#### 5-year continuous & 14 plots
+##### Fig.S12B-Temporal cover
+```{r,fig.width=6,fig.height=5}
+## get temporal distribution for each site
+time_fish_5year=site_fish_5year %>% 
+  select(Basin,time) %>% 
+  distinct() %>% 
+  separate_rows(time,sep=",") %>% 
+  mutate(time=as.numeric(time))
+
+## histogram
+# breaks
+bk=c(seq(5,24,by=5),24)
+
+S12_B1=div_sta_z_fish_5year %>% 
+ggplot(aes(x=duration))+
+  geom_histogram(col="black",fill="gray",binwidth =5,size=0.25)+
+  scale_x_continuous(breaks=bk)+
+ coord_cartesian(xlim = range(bk),expand = T)+
+   coord_cartesian(ylim =c(0,NA),expand = F)+
+  labs(x="Temporal duration(year)",y="Number of Basins")+
+  theme1+
+  theme(panel.background = element_blank())+
+    theme(
+        axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .4,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))
+## tile plot
+ S12_B2=time_fish_5year %>%  
+     mutate(N="yes")%>%
+     ggplot()+
+     geom_tile(aes(x=time,y=factor(Basin),fill=N),show.legend = F,col="white")+
+     scale_fill_manual(values=c("steelblue"))+
+     labs(y=NULL,x="Year")+
+     scale_x_continuous(breaks = seq(min(unique(time_fish_5year$time)),max(unique(time_fish_5year$time)),by=2),expand = expansion(add=c(0,0)))+
+     theme1+
+     theme(
+         axis.text.y = element_text(size = 5, family = "sans", color = "black"),
+        axis.text.x = element_text(size = 5,angle = 45, family = "sans", color = "black"),
+        axis.title.y = element_text(size = 6, family = "sans", color = "black"),
+        axis.title.x = element_text(size = 6, family = "sans", color = "black"),
+        plot.margin = margin(t = .2,  # Top margin
+                             r = .2,  # Right margin
+                             b = .2,  # Bottom margin
+                             l = .2,
+                             unit = "cm"))+
+     labs(y="Basin")
+ S12_B=ggarrange(S12_B1,S12_B2,heights = c(1,3.3),ncol=1)
+ 
+ggarrange(S12_A,S12_B, align ="hv", nrow = 1,ncol=2,labels=LETTERS[1:2], font.label=list(color="black",size=10,family="sans"),hjust=0,vjust=1.25)
+ggsave(paste0(wd_path,"/figure/Figure_S12.pdf"),height = 10,width =10,units = "cm",dpi=300)
+ggsave(paste0(wd_path,"/figure/Figure_S12.png"),height = 10,width =10,units = "cm",dpi=300)
+
+
+```
+
+##### Table S4-2
+
+###### Z_{StAR} partition 
+
+```{r,fig.width=4,fig.height=2}
+#| message: false
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_fish_5year, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_fish_5year, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.fish_5year=st_par(div_sta_z_fish_5year,list=F)
+
+#statistical results 
+st_par_sta.fish_5year=st_par.fish_5year[[2]] %>% mutate(Dataset="fish_5year")
+#plots 
+st_par.fish_5year[[1]] 
+```
+
+###### Z_{SAR}-Z_{StAR} Relationship
+
+```{r,fig.width=6,fig.height=2}
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_fish_5year, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_fish_5year, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_fish_5year, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.fish_5year=div_st(div_sta_z_fish_5year,list=F)
+
+#statistical results 
+div_st_sta.fish_5year=div_st.fish_5year[[2]] %>% mutate(Dataset="fish_5year")
+#plots 
+div_st.fish_5year[[1]] 
+
+
+
+```
+
+```{r}
+
+TS4_2=rbind(st_par_sta.fish_5year,div_st_sta.fish_5year) %>% 
+  mutate(N_plot=paste(min(div_sta_z_fish_5year$N),max(div_sta_z_fish_5year$N),sep="-"))
+```
+
+
+
+#### Euclidean Distance
+
+##### Table S4-3
+
+###### Z_{StAR} partition 
+
+```{r,fig.width=4,fig.height=2}
+#| message: false
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_fish_EU, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_fish_EU, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.fish_EU=st_par(div_sta_z_fish_EU,list=F)
+
+#statistical results 
+st_par_sta.fish_EU=st_par.fish_EU[[2]] %>% mutate(Dataset="fish_EU")
+#plots 
+st_par.fish_EU[[1]] 
+```
+
+###### Z_{SAR}-Z_{StAR} Relationship
+
+```{r,fig.width=6,fig.height=2}
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_fish_EU, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_fish_EU, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_fish_EU, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.fish_EU=div_st(div_sta_z_fish_EU,list=F)
+
+#statistical results 
+div_st_sta.fish_EU=div_st.fish_EU[[2]] %>% mutate(Dataset="fish_EU")
+#plots 
+div_st.fish_EU[[1]] 
+
+
+
+```
+
+```{r}
+TS4_3=rbind(st_par_sta.fish_EU,div_st_sta.fish_EU)  %>% 
+  mutate(N_plot=paste(min(div_sta_z_fish_EU$N),max(div_sta_z_fish_EU$N),sep="-"))
+```
+
+
+#### Biomass based
+
+##### Table S4-4(Before removing rare fishes)
+
+###### Z_{StAR} partition 
+
+```{r,fig.width=4,fig.height=2}
+#| message: false
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_fish_bio_full, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_fish_bio_full, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.fish_bio_full=st_par(div_sta_z_fish_bio_full,list=F)
+
+#statistical results 
+st_par_sta.fish_bio_full=st_par.fish_bio_full[[2]] %>% mutate(Dataset="fish_bio_full")
+#plots 
+st_par.fish_bio_full[[1]] 
+```
+
+###### Z_{SAR}-Z_{StAR} Relationship
+
+```{r,fig.width=6,fig.height=2}
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_fish_bio_full, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_fish_bio_full, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_fish_bio_full, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.fish_bio_full=div_st(div_sta_z_fish_bio_full,list=F)
+
+#statistical results 
+div_st_sta.fish_bio_full=div_st.fish_bio_full[[2]] %>% mutate(Dataset="fish_bio_full")
+#plots 
+div_st.fish_bio_full[[1]] 
+
+```
+
+```{r}
+TS4_4=rbind(st_par_sta.fish_bio_full,div_st_sta.fish_bio_full) %>% 
+  mutate(N_plot=paste(min(div_sta_z_fish_bio_full$N),max(div_sta_z_fish_bio_full$N),sep="-"))
+```
+
+
+##### Table S4-5(After removing rare fishes)
+
+###### Z_{StAR} partition 
+
+```{r,fig.width=4,fig.height=2}
+#| message: false
+
+## SMA models
+# lmodel2(estar_slope ~ sstar_slope, data = div_sta_z_fish_bio, nperm = 999)
+# lmodel2(estar_slope ~ asar_slope, data = div_sta_z_fish_bio, nperm = 999)
+
+## statistical results and visualization of above models
+st_par.fish_bio=st_par(div_sta_z_fish_bio,list=F)
+
+#statistical results 
+st_par_sta.fish_bio=st_par.fish_bio[[2]] %>% mutate(Dataset="fish_bio")
+#plots 
+st_par.fish_bio[[1]] 
+```
+
+###### Z_{SAR}-Z_{StAR} Relationship
+
+```{r,fig.width=6,fig.height=2}
+## SMA models
+# lmodel2(estar_slope ~ sar_ave_slope, data = div_sta_z_fish_bio, nperm = 999)
+# lmodel2(sstar_slope ~ sar_ave_slope, data = div_sta_z_fish_bio, nperm = 999)
+# lmodel2(asar_slope ~ sar_ave_slope, data = div_sta_z_fish_bio, nperm = 999)
+
+## statistical results and visualization of above models
+div_st.fish_bio=div_st(div_sta_z_fish_bio,list=F)
+
+#statistical results 
+div_st_sta.fish_bio=div_st.fish_bio[[2]] %>% mutate(Dataset="fish_bio")
+#plots 
+div_st.fish_bio[[1]] 
+
+```
+
+
+```{r}
+TS4_5=rbind(st_par_sta.fish_bio,div_st_sta.fish_bio)%>% 
+  mutate(N_plot=paste(min(div_sta_z_fish_bio$N),max(div_sta_z_fish_bio$N),sep="-"))
+```
+
+
+### All SM tables
+
+#### Table S3
+
+```{r}
+TS3=rbind(TS3_1,TS3_2,TS3_3) %>% 
+  mutate(Pvalues=ifelse(round(Pvalues,3)==0,"<0.001",round(Pvalues,3)))
+knitr::kable(TS3 %>% 
+      select(Dataset,X,Y,Intercept:Pvalues,R2,N,N_plot), align = 'c', digits = 3,booktabs = TRUE,size=8)
+
+```
+
+#### Table S4
+
+```{r}
+TS4=rbind(TS4_1,TS4_2,TS4_3,TS4_4,TS4_5) %>% 
+  mutate(Pvalues=ifelse(round(Pvalues,3)==0,"<0.001",round(Pvalues,3)))
+knitr::kable(TS4 %>% 
+      select(Dataset,X,Y,Intercept:Pvalues,R2,N,N_plot), align = 'c', digits = 3,booktabs = TRUE,size=8)
+
+```
+
+#### Table S5
+```{r}
+knitr::kable(TableS5 %>% 
+  arrange(Y,X), align = 'c', digits = 3,booktabs = TRUE,size=8)
+```
+
+
+#### Table S6
+
+```{r}
+knitr::kable(TableS6 %>% 
+  arrange(Y,X), align = 'c', digits = 3,booktabs = TRUE,size=8)
+```
+
+
+#### Table S7
+```{r}
+knitr::kable(TS7[,c(9:10,1:6)] %>% 
+             rename(Pvalue=`Pr(>|t|)`) %>% 
+              dplyr:: mutate( Pvalue=cell_spec(Pvalue,bold = ifelse(Pvalue<0.05,T,F)),
+                      X=case_when(
+                        X=="MAP_mm"~"Mean precipitation",
+                        X=="MAT_C"~"Mean temperature",
+                        X=="MAP_sd"~"Precipitation variation",
+                        X=="MAT_sd"~"Temperature variation",
+                        X=="duration"~"Year",
+                        X=="n_plot"~"Plot",
+                        X=="mp_dist"~"MPD",
+                        X=="mnn_dist"~"MNND",
+                      )) , align = 'c', digits = 3,booktabs = TRUE,size=8)
+```
+
+
+
+
+#### Table S8
+```{r}
+knitr::kable(TS8[,c(9:10,1:6)] %>% 
+             rename(Pvalue=`Pr(>|t|)`) %>% 
+              dplyr:: mutate( Pvalue=cell_spec(Pvalue,bold = ifelse(Pvalue<0.05,T,F)),
+                      X=case_when(
+                        X=="MAP_mm"~"Mean precipitation",
+                        X=="MAT_C"~"Mean temperature",
+                        X=="MAP_sd"~"Precipitation variation",
+                        X=="MAT_sd"~"Temperature variation",
+                        X=="duration"~"Year",
+                        X=="n_plot"~"Plot",
+                        X=="mp_dist"~"MPD",
+                        X=="mnn_dist"~"MNND",
+                      )) , align = 'c', digits = 3,booktabs = TRUE,size=8)
+```
+
+#### Table S9
+```{r}
+knitr::kable(
+  TableS9 %>% 
+   mutate(P.Value=ifelse(round(P.Value,3)==0,"<0.001",round(P.Value,3))) %>% 
+   arrange(model,Predictor), align = 'c', digits = 3,booktabs = TRUE,size=8)
+```
